@@ -1079,12 +1079,16 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
   que cada columna de la `mat3` quede en su lugar, que el relleno quede a
   cero, con un canario que la escritura no pase del bloque y que una matriz
   que no entra se rechace sin modificarlo.
-- `vulkan-backend-tests` (406): el backend de Vulkan sobre un render target
+- `vulkan-backend-tests` (422): el backend de Vulkan sobre un render target
   fuera de pantalla, sin ventana: dibuja una malla y lee los píxeles. Comprueba
-  el color del material con el ambiente global, y que una luz direccional
+  el color del material con el ambiente global, que una luz direccional
   ilumine con la normal que dice la matriz de normales (la `mat3` del bloque
-  llega al shader con las columnas en el layout de std140). *Skipped* (77) si
-  la máquina no tiene un dispositivo Vulkan utilizable.
+  llega al shader con las columnas en el layout de std140) y que el batch de
+  líneas se pueda reescribir: se dibuja un segmento, se reescribe el batch con
+  la misma cantidad de vértices y otra geometría, y la segunda imagen tiene que
+  ser distinta de la primera (la memoria del batch es visible para la CPU y
+  queda mapeada). *Skipped* (77) si la máquina no tiene un dispositivo Vulkan
+  utilizable.
 - `tema-tests` (28): `TemaEditor` (aplicación del perfil `Apariencia`): el acento
   llega a todos los roles de ImGui y el modo B/N deja la paleta monocroma.
 - `comandos-tests` (77): undo/redo del editor (7 comandos, cadena de redo

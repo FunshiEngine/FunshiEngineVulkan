@@ -256,17 +256,66 @@ void BackendVulkan::destroyMesh(Handle mesh) {
 // Batch de lineas
 // ---------------------------------------------------------------------------
 
+// El batch de lineas se reescribe en cada frame (grilla, gizmos, realce del
+// elemento apuntado), asi que su memoria se pide visible para la CPU y se deja
+// mapeada de forma permanente: actualizar el batch es un memcpy al puntero
+// mapeado, sin buffer de paso ni copia de transferencia por frame.
+//
+// La memoria DEVICE_LOCAL (la de las mallas y las texturas, que se suben una
+// vez y no se tocan mas) no sirve aqui: Vulkan solo permite mapear memoria
+// HOST_VISIBLE, y el driver devuelve un fallo al mapear la otra.
+bool BackendVulkan::crearBatchLineas(BatchLineasVulkan& batch,
+                                      std::size_t bytes) {
+    if (!crearBufferVacio(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          batch.vertices, batch.memoriaVertices,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+        batch.vertices = VK_NULL_HANDLE;
+        batch.memoriaVertices = VK_NULL_HANDLE;
+        return false;
+    }
+    if (!funciones_.vkMapMemory ||
+        !okVulkan(funciones_.vkMapMemory(dispositivo_, batch.memoriaVertices, 0,
+                                         bytes, 0, &batch.mapaVertices),
+                  "vkMapMemory (batch)")) {
+        funciones_.vkDestroyBuffer(dispositivo_, batch.vertices, nullptr);
+        funciones_.vkFreeMemory(dispositivo_, batch.memoriaVertices, nullptr);
+        batch.vertices = VK_NULL_HANDLE;
+        batch.memoriaVertices = VK_NULL_HANDLE;
+        batch.mapaVertices = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void BackendVulkan::liberarBatchLineas(BatchLineasVulkan& batch) {
+    // El mapeo se levanta antes de liberar la memoria: no se puede liberar
+    // memoria que sigue mapeada.
+    if (batch.mapaVertices) {
+        funciones_.vkUnmapMemory(dispositivo_, batch.memoriaVertices);
+        batch.mapaVertices = nullptr;
+    }
+    if (batch.vertices)
+        funciones_.vkDestroyBuffer(dispositivo_, batch.vertices, nullptr);
+    if (batch.memoriaVertices)
+        funciones_.vkFreeMemory(dispositivo_, batch.memoriaVertices, nullptr);
+    batch.vertices = VK_NULL_HANDLE;
+    batch.memoriaVertices = VK_NULL_HANDLE;
+    batch.verticesCount = 0;
+    batch.capacidad = 0;
+}
+
 Handle BackendVulkan::createLineBatch(const float* vertices,
                                        std::size_t vertexCount) {
     if (!vertices || vertexCount == 0) return kInvalidHandle;
 
     BatchLineasVulkan batch;
     const std::size_t bytes = vertexCount * kFloatsVerticeLinea * sizeof(float);
-    if (!crearBufferSubiendo(vertices, bytes,
-                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                              batch.vertices, batch.memoriaVertices)) {
+    if (!crearBatchLineas(batch, bytes)) {
+        liberarBatchLineas(batch);
         return kInvalidHandle;
     }
+    std::memcpy(batch.mapaVertices, vertices, bytes);
     batch.verticesCount = static_cast<std::uint32_t>(vertexCount);
     batch.capacidad = bytes;
     return registrarBatch(batch);
@@ -275,10 +324,7 @@ Handle BackendVulkan::createLineBatch(const float* vertices,
 void BackendVulkan::destroyLineBatch(Handle batch) {
     auto it = batches_.find(batch);
     if (it == batches_.end()) return;
-    if (it->second.vertices)
-        funciones_.vkDestroyBuffer(dispositivo_, it->second.vertices, nullptr);
-    if (it->second.memoriaVertices)
-        funciones_.vkFreeMemory(dispositivo_, it->second.memoriaVertices, nullptr);
+    liberarBatchLineas(it->second);
     batches_.erase(it);
 }
 
@@ -291,30 +337,14 @@ void BackendVulkan::updateLineBatch(Handle batch, const float* vertices,
     const std::size_t bytes = vertexCount * kFloatsVerticeLinea * sizeof(float);
     if (bytes > b.capacidad) {
         // El batch crecio: se reemplaza el buffer por uno mayor.
-        if (b.vertices)
-            funciones_.vkDestroyBuffer(dispositivo_, b.vertices, nullptr);
-        if (b.memoriaVertices)
-            funciones_.vkFreeMemory(dispositivo_, b.memoriaVertices, nullptr);
-        b.vertices = VK_NULL_HANDLE;
-        b.memoriaVertices = VK_NULL_HANDLE;
-        b.capacidad = 0;
-        if (!crearBufferSubiendo(vertices, bytes,
-                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, b.vertices,
-                                  b.memoriaVertices)) {
-            return;
-        }
+        liberarBatchLineas(b);
+        if (!crearBatchLineas(b, bytes)) return;
         b.capacidad = bytes;
-    } else {
-        // Mismo tamano: solo se reescribe el contenido del buffer.
-        if (!funciones_.vkMapMemory || !b.memoriaVertices) return;
-        void* mapa = nullptr;
-        if (!okVulkan(funciones_.vkMapMemory(dispositivo_, b.memoriaVertices, 0,
-                                             bytes, 0, &mapa),
-                      "vkMapMemory (batch)"))
-            return;
-        std::memcpy(mapa, vertices, bytes);
-        funciones_.vkUnmapMemory(dispositivo_, b.memoriaVertices);
     }
+    if (!b.mapaVertices) return;
+    // Mismo tamano: solo se reescribe el contenido del buffer, que ya esta
+    // mapeado.
+    std::memcpy(b.mapaVertices, vertices, bytes);
     b.verticesCount = static_cast<std::uint32_t>(vertexCount);
 }
 
