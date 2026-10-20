@@ -945,11 +945,12 @@ desde `src/ImGui/` y los de ImGuizmo desde `ImGuizmo/` (fuera de `src/`).
 
 Además del ejecutable, el proyecto define **veintinueve targets de prueba
 headless** registrados en CTest (`scripts-java-tests` solo se registra con
-`-DFUNSHI_JAVA=ON`; nueve de ellos viven bajo `BUILD_ENGINE=ON`
+`-DFUNSHI_JAVA=ON`; once de ellos viven bajo `BUILD_ENGINE=ON`
 —`comandos-tests`, `escena-serializacion-tests`, `catalogo-componentes-tests`,
-`tilemap-tests`, `interfaces-juego-tests`,
-`prefab-tests`, `manifiesto-assets-tests`, `orquestador-estado-tests` y
-`tema-tests`—, y el resto compila también con `BUILD_ENGINE=OFF`):
+`tilemap-tests`, `interfaces-juego-tests`, `contrato-render-tests`,
+`prefab-tests`, `manifiesto-assets-tests`, `orquestador-estado-tests`,
+`tema-tests` e `interface-component-tests`—, y el resto compila también con
+`BUILD_ENGINE=OFF`):
 
 - `filemanager-tests` (190 en Linux; 181 en Windows con MinGW, 183 con MSVC): ejercita `GestorDeArchivos`/`FileManager`/`FileSystemWatcher`
   contra un proyecto temporal, sin ventanas ni pila gráfica; incluye el arrastre
@@ -1114,13 +1115,15 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
   recién redimensionada a las dimensiones por defecto, y pantalla alternativa
   con resize (cursor restaurado acotado).
 
-Las **nueve** suites que dependen del engine (`comandos-tests`,
+Las **diez** suites que dependen del engine (`comandos-tests`,
 `escena-serializacion-tests`, `catalogo-componentes-tests`, `tilemap-tests`,
-`interfaces-juego-tests`, `prefab-tests`, `manifiesto-assets-tests`,
-`orquestador-estado-tests` y `tema-tests`) enlazan `funshi_engine` y solo se
-registran con `BUILD_ENGINE=ON`. El resto compila sus fuentes directamente
-(`interface-component-tests` y `barra-progreso-tests` entre ellos) y corre
-también con `BUILD_ENGINE=OFF`.
+`interfaces-juego-tests`, `contrato-render-tests`, `prefab-tests`,
+`manifiesto-assets-tests`, `orquestador-estado-tests` y `tema-tests`) enlazan
+`funshi_engine`; `interface-component-tests` compila sus fuentes sueltas, pero el
+`InterfaceComponent` usa glm: también solo se registra con `BUILD_ENGINE=ON`. El
+resto compila sus fuentes directamente (`barra-progreso-tests` entre ellas) y
+corre también con `BUILD_ENGINE=OFF`: con el motor hay 29 suites registradas y
+sin él 17.
 
 La opción `BUILD_ENGINE=OFF` compila solo las pruebas (útil en CI y plataformas
 sin las librerías gráficas), y `ENABLE_ASAN` (ON por defecto en Debug) activa
