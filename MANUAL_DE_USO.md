@@ -55,7 +55,7 @@ tiene Vulkan, el backend no arranca y el editor abre sin dibujar.
 ```bash
 cmake -S FunshiEngineGL -B FunshiEngineGL/build
 cmake --build FunshiEngineGL/build -j$(nproc)
-./FunshiEngineGL/build/FunshiEngineGL
+./FunshiEngineGL/build/FunshiEngineVK
 ```
 
 El backend se puede dejar de compilar con `-DFUNSHI_VULKAN=OFF` (el editor
@@ -89,7 +89,7 @@ Al crear un proyecto, el motor genera la estructura bajo
 > **Dónde quedan los datos.** `{app}` es la carpeta del ejecutable cuando el
 > motor está en una carpeta donde puede escribir: el build de desarrollo y
 > también la instalación de Windows, que es por usuario
-> (`%LOCALAPPDATA%\Programs\FunshiEngineGL`, sin pedir permisos de
+> (`%LOCALAPPDATA%\Programs\FunshiEngineVK`, sin pedir permisos de
 > administrador). Si el motor está en una carpeta donde no puede escribir —una
 > copia en `Program Files`, una carpeta montada en solo lectura, el motor
 > lanzado como administrador—, usa en su lugar
@@ -1267,7 +1267,7 @@ la JVM (`motivo:`), la carpeta de caché, dónde se buscaron las clases y con qu
 `javac` y `libjvm`. Con eso se distingue de un vistazo entre "el `.java` no
 compiló", "la clase no existe" y "el `.class` es de otra versión de Java".
 
-El instalador de Windows (`FunshiEngineGL_setup.iss`) comprueba si hay un JDK
+El instalador de Windows (`FunshiEngineVK_setup.iss`) comprueba si hay un JDK
 antes de instalar —exige `bin\server\jvm.dll` **y** `bin\javac.exe`, los dos, que
 es lo mismo que necesita el motor— y, si no lo encuentra, ofrece descargar e
 instalar Temurin JDK 17. El paquete de Linux (Qt IFW) no puede encadenar

@@ -333,7 +333,7 @@ gameScene()                                   (cada frame)
 AddressSanitizer + UBSan por defecto — así se atrapó el overflow de §6.2.
 
 ```bash
-cmake --build build --target FunshiEngineGL -j4
+cmake --build build --target FunshiEngineVK -j4
 ```
 
 > Nota histórica: para reproducir estos bugs se usó temporalmente una

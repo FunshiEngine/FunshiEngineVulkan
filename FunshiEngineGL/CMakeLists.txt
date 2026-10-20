@@ -9,8 +9,8 @@ cmake_minimum_required(VERSION 3.15)
 set(FUNSHI_VERSION "0.5.4" CACHE STRING "Versión del producto (X.Y.Z)")
 # C y CXX: el proyecto es C++, pero las distribuciones de CEF (cef_variables.cmake)
 # corren CHECK_C_COMPILER_FLAG en configure y CMake exige el lenguaje habilitado.
-project(FunshiEngineGL VERSION ${FUNSHI_VERSION} LANGUAGES C CXX)
-message(STATUS "FunshiEngineGL ${PROJECT_VERSION} (FUNSHI_VERSION=${FUNSHI_VERSION})")
+project(FunshiEngineVK VERSION ${FUNSHI_VERSION} LANGUAGES C CXX)
+message(STATUS "FunshiEngineVK ${PROJECT_VERSION} (FUNSHI_VERSION=${FUNSHI_VERSION})")
 # Sustituciones de configure_file para el .rc: el icono se referencia relativo
 # al .rc (se copia al build), la version se lleva a comas (1,2,3,0).
 set(FUNSHI_APP_ICON "app.ico")
@@ -134,11 +134,11 @@ if(BUILD_ENGINE)
         # recursos de MSVC/MinGW lo enlaza al .exe.
         configure_file(
             ${CMAKE_SOURCE_DIR}/packaging/icon/app.rc.in
-            ${CMAKE_BINARY_DIR}/FunshiEngineGL.rc @ONLY)
+            ${CMAKE_BINARY_DIR}/FunshiEngineVK.rc @ONLY)
         file(COPY ${CMAKE_SOURCE_DIR}/packaging/icon/app.ico
              DESTINATION ${CMAKE_BINARY_DIR})
         target_sources(${PROJECT_NAME} PRIVATE
-            ${CMAKE_BINARY_DIR}/FunshiEngineGL.rc)
+            ${CMAKE_BINARY_DIR}/FunshiEngineVK.rc)
     endif()
     set_target_properties(${PROJECT_NAME} PROPERTIES
         WIN32_EXECUTABLE TRUE

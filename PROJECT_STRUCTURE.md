@@ -36,7 +36,7 @@ entrada de los **juegos exportados** es `FunshiEngineGL/src/Runtime/main_juego.c
 (sin código del editor: GUIManager, MenuGUI, paneles). La configuración de compilación
 está en `FunshiEngineGL/CMakeLists.txt`, que es el único build soportado: CMake
 genera la solución de Visual Studio dentro del directorio de build que elijas
-(por ejemplo `FunshiEngineGL/build-win/FunshiEngineGL.sln`), así que no hay
+(por ejemplo `FunshiEngineGL/build-win/FunshiEngineVK.sln`), así que no hay
 proyectos de Visual Studio mantenidos a mano en el repositorio. Las pruebas
 headless viven en `tests/` y el CI en
 `.github/workflows/ci.yml`.
@@ -1223,7 +1223,7 @@ calcularla:
    en Windows, `$XDG_DATA_HOME/FunshiEngineVK` o `~/.local/share/FunshiEngineVK`
    en Linux y macOS. El instalador de Windows es por usuario
    (`PrivilegesRequired=lowest`), así que en una instalación normal este punto
-   2 se cumple y la carpeta queda en `%LOCALAPPDATA%\Programs\FunshiEngineGL`:
+   2 se cumple y la carpeta queda en `%LOCALAPPDATA%\Programs\FunshiEngineVK`:
    el paso 3 es la red que cubre una copia en `Program Files`, una carpeta en
    solo lectura o el motor lanzado como administrador.
 4. Si tampoco hay carpeta de usuario utilizable, conserva la ruta histórica: es

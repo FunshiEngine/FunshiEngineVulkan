@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Installer>
-    <Name>FunshiEngineGL</Name>
+    <Name>FunshiEngineVK</Name>
     <Version>0.5.4</Version>
-    <Title>FunshiEngineGL Installer</Title>
-    <Publisher>FunshiEngineGL</Publisher>
+    <Title>FunshiEngineVK Installer</Title>
+    <Publisher>FunshiEngineVK</Publisher>
 
     <WizardStyle>Modern</WizardStyle>
 
@@ -15,10 +15,10 @@
     <Logo>logo_banner.png</Logo>
     <InstallerWindowIcon>logo.png</InstallerWindowIcon>
 
-    <TargetDir>@HomeDir@/Desktop/FunshiEngineGL</TargetDir>
+    <TargetDir>@HomeDir@/Desktop/FunshiEngineVK</TargetDir>
 
-    <MaintenanceToolName>FunshiEngineGLMaintenanceTool</MaintenanceToolName>
-    <MaintenanceToolIniFile>FunshiEngineGLMaintenanceTool.ini</MaintenanceToolIniFile>
+    <MaintenanceToolName>FunshiEngineVKMaintenanceTool</MaintenanceToolName>
+    <MaintenanceToolIniFile>FunshiEngineVKMaintenanceTool.ini</MaintenanceToolIniFile>
 
     <AllowNonAsciiCharacters>true</AllowNonAsciiCharacters>
     <AllowSpaceInPath>true</AllowSpaceInPath>

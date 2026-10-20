@@ -268,7 +268,7 @@ static int EjecutarMotor(int argc, char* argv[])
 #endif
     std::set_terminate(registrarExcepcionNoCapturada);
     // Parseo simple de --proyecto <nombre> para arrancar directo en editor
-    // (skip menu). Usado para ejecutar un juego exportado: FunshiEngineGL
+    // (skip menu). Usado para ejecutar un juego exportado: FunshiEngineVK
     // --proyecto MiJuego. --juego fuerza el modo juego, que es como arranca
     // una exportacion (tambien via JuegoExportado.json, ver mas abajo).
     std::string proyectoCLI;

@@ -141,14 +141,14 @@ El criterio de aceptación de un fix lo define el usuario probando la app real
 poder lanzarla:
 
 ```bash
-cd FunshiEngineGL && ./build/FunshiEngineGL       # Linux
-cd FunshiEngineGL && ./build/FunshiEngineGL.exe   # Windows
+cd FunshiEngineGL && ./build/FunshiEngineVK       # Linux
+cd FunshiEngineGL && ./build/FunshiEngineVK.exe   # Windows
 ```
 
 - Lanzarlo **desde `FunshiEngineGL/`**: los assets y las rutas relativas se
   resuelven contra el cwd.
 - La salida (stdout y stderr) se redirige a un archivo por arranque en
-  `logs/`, junto al ejecutable —`FunshiEngineGL_<AAAAMMDD_HHMMSS>.log`, con
+  `logs/`, junto al ejecutable —`FunshiEngineVK_<AAAAMMDD_HHMMSS>.log`, con
   timestamp **UTC**—, así que el editor no abre consola. Es lo primero que hay
   que mirar cuando algo falla.
 

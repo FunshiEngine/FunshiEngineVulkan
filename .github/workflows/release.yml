@@ -3,7 +3,7 @@ name: Release instaladores
 # Genera los instaladores de Linux (Qt IFW .run) y Windows (Inno .exe) con el
 # codigo del tag y los adjunta a una GitHub Release. No modifica el sistema de
 # packaging: reutiliza packaging/ifw (config.xml/controller.qs intactos) y
-# packaging/FunshiEngineGL_setup.iss / stage_dist_win.ps1 tal como estan.
+# packaging/FunshiEngineVK_setup.iss / stage_dist_win.ps1 tal como estan.
 #
 #   Uso: git tag v0.5.2 && git push --tags   (o Run workflow manual).
 
@@ -61,7 +61,7 @@ jobs:
           -DFUNSHI_VERSION=${{ steps.ver.outputs.version }}
 
       - name: Compilar engine
-        run: cmake --build build --config Release --target FunshiEngineGL
+        run: cmake --build build --config Release --target FunshiEngineVK
 
       - name: Compilar pruebas
         run: cmake --build build --config Release --target terminal-emulator-tests diagnostic-registry-tests filemanager-tests configuracion-tests eventbus-tests menu-tests assetmanager-tests texturemanager-tests estructuras-tests rendering-tests scripts-tests scripts-runtime-tests audio-tests interface-component-tests barra-progreso-tests scripts-java-tests model-serialization-tests manifiesto-assets-tests orquestador-estado-tests tema-tests comandos-tests escena-serializacion-tests proceso-tests prefab-tests catalogo-componentes-tests interfaces-juego-tests uniformes-vulkan-tests
@@ -85,7 +85,7 @@ jobs:
       - name: Versionar instalador con el tag
         shell: pwsh
         run: |
-          $iss = "FunshiEngineGL\packaging\FunshiEngineGL_setup.iss"
+          $iss = "FunshiEngineGL\packaging\FunshiEngineVK_setup.iss"
           (Get-Content -Raw $iss) `
             -replace '#define MiVersion "[^"]*"', "#define MiVersion `"${{ steps.ver.outputs.version }}`"" `
             -replace '#define MiCanal "[^"]*"', '#define MiCanal "release"' `
@@ -100,7 +100,7 @@ jobs:
             $iscc = (Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -Recurse -ErrorAction SilentlyContinue |
                      Select-Object -First 1 -ExpandProperty FullName)
           }
-          & $iscc "FunshiEngineGL\packaging\FunshiEngineGL_setup.iss"
+          & $iscc "FunshiEngineGL\packaging\FunshiEngineVK_setup.iss"
 
       - name: Subir setup.exe como artefacto
         uses: actions/upload-artifact@v4
@@ -152,7 +152,7 @@ jobs:
         run: cmake -B build -S FunshiEngineGL -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=OFF -DFUNSHI_JAVA=ON -DFUNSHI_VERSION=${{ steps.ver.outputs.version }}
 
       - name: Compilar engine
-        run: cmake --build build --target FunshiEngineGL
+        run: cmake --build build --target FunshiEngineVK
 
       - name: Compilar pruebas
         run: cmake --build build --target terminal-emulator-tests diagnostic-registry-tests filemanager-tests configuracion-tests eventbus-tests menu-tests assetmanager-tests texturemanager-tests estructuras-tests rendering-tests scripts-tests scripts-runtime-tests audio-tests interface-component-tests barra-progreso-tests scripts-java-tests model-serialization-tests manifiesto-assets-tests orquestador-estado-tests tema-tests comandos-tests escena-serializacion-tests proceso-tests catalogo-componentes-tests interfaces-juego-tests uniformes-vulkan-tests
@@ -166,7 +166,7 @@ jobs:
           command: ctest --test-dir build --output-on-failure --verbose
 
       - name: Montar datos del paquete IFW (binario + libs locales)
-        run: chmod +x FunshiEngineGL/packaging/stage_dist_linux.sh && FunshiEngineGL/packaging/stage_dist_linux.sh build/FunshiEngineGL
+        run: chmod +x FunshiEngineGL/packaging/stage_dist_linux.sh && FunshiEngineGL/packaging/stage_dist_linux.sh build/FunshiEngineVK
 
       - name: Instalar Qt Installer Framework (aqtinstall)
         run: |
@@ -180,13 +180,13 @@ jobs:
           "$QIFW_BIN" --offline-only \
             -c FunshiEngineGL/packaging/ifw/config/config.xml \
             -p FunshiEngineGL/packaging/ifw/packages \
-            "FunshiEngineGL-${{ steps.ver.outputs.version }}-linux-x64.run"
+            "FunshiEngineVK-${{ steps.ver.outputs.version }}-linux-x64.run"
 
       - name: Subir instalador .run como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: installer-linux
-          path: ./FunshiEngineGL-*-linux-x64.run
+          path: ./FunshiEngineVK-*-linux-x64.run
           if-no-files-found: error
 
   publicar-release:

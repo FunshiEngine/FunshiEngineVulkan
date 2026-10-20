@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  FunshiEngineGL - Monta los datos del paquete IFW de Linux con el binario
+#  FunshiEngineVK - Monta los datos del paquete IFW de Linux con el binario
 #  compilado en CI (build recien hecho) + sus librerias dinamicas locales.
 #
 #  Replica el flujo Linux que ya fue probado (instalador v0.5.1):
@@ -10,11 +10,11 @@
 #   - deps de terceros (glfw/assimp/bullet/draco/...) en data/lib/
 #   - NO toca packaging/ifw/config (config.xml/controller.qs intactos)
 #
-#  Uso: stage_dist_linux.sh <build/FunshiEngineGL> [<dir data del paquete>]
+#  Uso: stage_dist_linux.sh <build/FunshiEngineVK> [<dir data del paquete>]
 # ============================================================================
 set -euo pipefail
 
-BIN_PATH="${1:?falta el binario compilado (build/FunshiEngineGL)}"
+BIN_PATH="${1:?falta el binario compilado (build/FunshiEngineVK)}"
 DATA_DIR="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/ifw/packages/com.funshi.engine/data" && pwd)}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -24,9 +24,9 @@ if [ ! -x "$BIN_PATH" ]; then
 fi
 
 echo "== [1/5] Binario =="
-install -m 755 "$BIN_PATH" "$DATA_DIR/FunshiEngineGL"
-patchelf --force-rpath --set-rpath '$ORIGIN/lib' "$DATA_DIR/FunshiEngineGL"
-echo "  [ok] FunshiEngineGL (RPATH \$ORIGIN/lib)"
+install -m 755 "$BIN_PATH" "$DATA_DIR/FunshiEngineVK"
+patchelf --force-rpath --set-rpath '$ORIGIN/lib' "$DATA_DIR/FunshiEngineVK"
+echo "  [ok] FunshiEngineVK (RPATH \$ORIGIN/lib)"
 
 echo "== [2/5] Librerias dinamicas (ldd) =="
 mkdir -p "$DATA_DIR/lib"
@@ -64,6 +64,6 @@ done
 echo "  [ok] include/ (${#CABECERAS[@]} cabeceras para scripts)"
 
 echo "== [5/5] Resultado =="
-echo "  binario : $DATA_DIR/FunshiEngineGL"
+echo "  binario : $DATA_DIR/FunshiEngineVK"
 echo "  libs    :"
 ls -1 "$DATA_DIR/lib"

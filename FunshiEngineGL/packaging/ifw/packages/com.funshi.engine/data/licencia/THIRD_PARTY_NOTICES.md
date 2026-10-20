@@ -64,7 +64,7 @@ MIT-0 / MIT a elección. En el instalador Linux, el aviso completo vive en
 
 ## Nota
 
-Las aportaciones al código propio de FunshiEngineGL se rigen por la Apache
+Las aportaciones al código propio de FunshiEngineVK se rigen por la Apache
 License 2.0 (sección 5, "Submission of Contributions"). Si añades una nueva
 biblioteca de terceros, documenta aquí su licencia, titular y ubicación.
 

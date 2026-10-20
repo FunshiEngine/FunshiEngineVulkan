@@ -81,7 +81,7 @@ bool esReservado(const std::string& nombre) {
 // Resolucion de la raiz de datos (vease la nota de ProjectPaths.h)
 //
 // La raiz MotorGrafico vivio historicamente junto al ejecutable. Con el
-// instalador de Windows eso la deja en "C:\Program Files\FunshiEngineGL\", que
+// instalador de Windows eso la deja en "C:\Program Files\FunshiEngineVK\", que
 // el proceso NO puede escribir sin elevar: el ejecutable no lleva manifest
 // requestedExecutionLevel, asi que corre como usuario normal mientras la
 // carpeta quedo creada por el instalador (que si es admin) heredando los ACL

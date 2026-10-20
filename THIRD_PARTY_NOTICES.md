@@ -101,7 +101,7 @@ completo ~83 MB, `en-US.pak` 0.55 MB): set a empaquetar ~311 MB.
 
 ## Nota
 
-Las aportaciones al código propio de FunshiEngineGL se rigen por la Apache
+Las aportaciones al código propio de FunshiEngineVK se rigen por la Apache
 License 2.0 (sección 5, "Submission of Contributions"). Si añades una nueva
 biblioteca de terceros, documenta aquí su licencia, titular y ubicación.
 

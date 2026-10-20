@@ -1,10 +1,10 @@
 # ============================================================================
-#  FunshiEngineGL - Monta la carpeta packaging/dist para el instalador.
+#  FunshiEngineVK - Monta la carpeta packaging/dist para el instalador.
 #  Llamado por HacerInstalador.bat (y por el CI en GitHub Actions).
 # ============================================================================
 param(
     [Parameter(Mandatory = $true)][string]$ProjectDir,   # raiz del proyecto (con CMakeLists.txt)
-    [Parameter(Mandatory = $true)][string]$BuildDir,     # salida config Release (contiene FunshiEngineGL.exe)
+    [Parameter(Mandatory = $true)][string]$BuildDir,     # salida config Release (contiene FunshiEngineVK.exe)
     [string]$VcpkgInstalled = ""                         # vcpkg installed\x64-windows (para copiar *.dll)
 )
 
@@ -15,12 +15,12 @@ if (Test-Path $Dist) { Remove-Item $Dist -Recurse -Force }
 New-Item -ItemType Directory -Path $Dist | Out-Null
 
 # --- 1. Ejecutable ----------------------------------------------------------
-$exe = Join-Path $BuildDir "FunshiEngineGL.exe"
+$exe = Join-Path $BuildDir "FunshiEngineVK.exe"
 if (-not (Test-Path $exe)) {
     Write-Error "No existe $exe. Compilá primero (HacerInstalador.bat paso 3)."
 }
 Copy-Item $exe $Dist
-Write-Host "  [ok] FunshiEngineGL.exe"
+Write-Host "  [ok] FunshiEngineVK.exe"
 
 
 

@@ -1,6 +1,6 @@
 @echo off
 REM ===========================================================================
-REM  FunshiEngineGL - Build Release + montaje de dist + instalador (Windows)
+REM  FunshiEngineVK - Build Release + montaje de dist + instalador (Windows)
 REM ===========================================================================
 REM  Requisitos:
 REM   - Visual Studio 2022 (MSVC C++)
@@ -55,7 +55,7 @@ REM --------------------------------------------------------------------------
 REM  4. Compilar + probar
 REM --------------------------------------------------------------------------
 echo [3/5] Compilando el ejecutable (Release)...
-cmake --build "%PROJ_DIR%\build-win" --config Release --target FunshiEngineGL
+cmake --build "%PROJ_DIR%\build-win" --config Release --target FunshiEngineVK
 if errorlevel 1 exit /b 1
 
 echo [4/5] Ejecutando pruebas (ctest)...
@@ -89,7 +89,7 @@ if defined ISCC (
     REM relativo a SourceDir). Con /O el compilador lo sobreescribia y el
     REM instalador acababa en packaging\instalador\, distinto de donde lo publica
     REM la CI (packaging\dist\instalador\) y de donde lo anuncia este script.
-    "%ISCC%" "%PKG_DIR%FunshiEngineGL_setup.iss"
+    "%ISCC%" "%PKG_DIR%FunshiEngineVK_setup.iss"
 ) else (
     echo [AVISO] Inno Setup no esta instalado: no se genero el instalador.
     echo          Descargalo de https://jrsoftware.org/isinfo.php y reintenta,

@@ -1,4 +1,4 @@
-# FunshiEngineGL
+# FunshiEngineVK
 
 Motor y editor de juegos en tiempo real escrito en C++17, con interfaz Dear ImGui y arquitectura modular (backends intercambiables).
 
@@ -37,7 +37,7 @@ arranca entonces sin dibujar).
 ## Ejecución
 
 ```bash
-cd FunshiEngineGL && ./build/FunshiEngineGL
+cd FunshiEngineGL && ./build/FunshiEngineVK
 ```
 
 ### Variable de entorno

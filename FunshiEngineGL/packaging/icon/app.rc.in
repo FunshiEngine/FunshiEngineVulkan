@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineVK - Motor de juegos 3D con Vulkan e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
     SPDX-License-Identifier: Apache-2.0
 
@@ -30,13 +30,13 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName",      "FunshiEngineGL"
-            VALUE "FileDescription",  "FunshiEngineGL - Editor de escenas 3D"
+            VALUE "CompanyName",      "FunshiEngineVK"
+            VALUE "FileDescription",  "FunshiEngineVK - Editor de escenas 3D"
             VALUE "FileVersion",      "@FUNSHI_VERSION@"
-            VALUE "InternalName",     "FunshiEngineGL"
+            VALUE "InternalName",     "FunshiEngineVK"
             VALUE "LegalCopyright",   "Copyright 2026 Gianfranco Ivan Enrique"
-            VALUE "OriginalFilename", "FunshiEngineGL.exe"
-            VALUE "ProductName",      "FunshiEngineGL"
+            VALUE "OriginalFilename", "FunshiEngineVK.exe"
+            VALUE "ProductName",      "FunshiEngineVK"
             VALUE "ProductVersion",   "@FUNSHI_VERSION@"
         END
     END
