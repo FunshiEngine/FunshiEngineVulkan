@@ -2,7 +2,7 @@
 
 ## 1. Descripción general
 
-`FunshiEngineGL` es un editor/motor gráfico 3D en C++17. El ejecutable combina:
+`FunshiEngineVK` es un editor/motor gráfico 3D en C++17. El ejecutable combina:
 
 - Ventana y eventos mediante GLFW, sin contexto gráfico: la superficie la crea
   el backend de render que se instale.
@@ -36,7 +36,7 @@ entrada de los **juegos exportados** es `FunshiEngineGL/src/Runtime/main_juego.c
 (sin código del editor: GUIManager, MenuGUI, paneles). La configuración de compilación
 está en `FunshiEngineGL/CMakeLists.txt`, que es el único build soportado: CMake
 genera la solución de Visual Studio dentro del directorio de build que elijas
-(por ejemplo `FunshiEngineGL/build-win/FunshiEngineGL.sln`), así que no hay
+(por ejemplo `FunshiEngineGL/build-win/FunshiEngineVK.sln`), así que no hay
 proyectos de Visual Studio mantenidos a mano en el repositorio. Las pruebas
 headless viven en `tests/` y el CI en
 `.github/workflows/ci.yml`.
@@ -138,6 +138,12 @@ FunshiEngineGL/                          ← raíz del repo
     │                                      (IPhysicsBackend) y backends de scripts (C++/Java)
     │                                      siguen patrón Strategy.
     ├── Imagenes/                        ← íconos del explorador (cpp, cubo, file, folder, hpp)
+    │   └── Logo/                        ← isotipo (PNG/SVG), icono (.ico) y logo principal
+    │                                    (PNG/SVG). El wordmark del logo principal es un
+    │                                    <text> vivo en EB Garamond y el PNG es su
+    │                                    rasterizado (2000x2404): si se cambia el texto,
+    │                                    hay que re-rasterizar el PNG y volver a firmar el
+    │                                    manifiesto C2PA del SVG.
     ├── ImGuizmo/                        ← dependencia integrada (ImGuizmo.cpp/.h, etc.)
     ├── External/nlohmann/json.hpp       ← nlohmann/json vendoriado (EditorConfig)
 
@@ -1227,11 +1233,11 @@ calcularla:
    `C:\Program Files` la carpeta es legible y aun así el proceso no puede crear
    nada dentro (la creó el instalador con los ACL de `Program Files`; el
    ejecutable no lleva manifiesto de elevación).
-3. Si no puede, cae a la carpeta de datos del usuario: `%APPDATA%\FunshiEngineGL`
-   en Windows, `$XDG_DATA_HOME/FunshiEngineGL` o `~/.local/share/FunshiEngineGL`
+3. Si no puede, cae a la carpeta de datos del usuario: `%APPDATA%\FunshiEngineVK`
+   en Windows, `$XDG_DATA_HOME/FunshiEngineVK` o `~/.local/share/FunshiEngineVK`
    en Linux y macOS. El instalador de Windows es por usuario
    (`PrivilegesRequired=lowest`), así que en una instalación normal este punto
-   2 se cumple y la carpeta queda en `%LOCALAPPDATA%\Programs\FunshiEngineGL`:
+   2 se cumple y la carpeta queda en `%LOCALAPPDATA%\Programs\FunshiEngineVK`:
    el paso 3 es la red que cubre una copia en `Program Files`, una carpeta en
    solo lectura o el motor lanzado como administrador.
 4. Si tampoco hay carpeta de usuario utilizable, conserva la ruta histórica: es

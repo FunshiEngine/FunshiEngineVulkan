@@ -26,6 +26,7 @@
 #include <unistd.h>
 #endif
 
+#include "NombreProducto.h"
 #include "ProjectPaths.h"
 
 #include <cctype>
@@ -80,7 +81,7 @@ bool esReservado(const std::string& nombre) {
 // Resolucion de la raiz de datos (vease la nota de ProjectPaths.h)
 //
 // La raiz MotorGrafico vivio historicamente junto al ejecutable. Con el
-// instalador de Windows eso la deja en "C:\Program Files\FunshiEngineGL\", que
+// instalador de Windows eso la deja en "C:\Program Files\FunshiEngineVK\", que
 // el proceso NO puede escribir sin elevar: el ejecutable no lleva manifest
 // requestedExecutionLevel, asi que corre como usuario normal mientras la
 // carpeta quedo creada por el instalador (que si es admin) heredando los ACL
@@ -92,18 +93,21 @@ bool esReservado(const std::string& nombre) {
 // datos por usuario. Se cachea: es una decision de proceso, no por llamada.
 // ---------------------------------------------------------------------------
 
-// Carpeta de datos por usuario: %APPDATA%\FunshiEngineGL en Windows;
-// $XDG_DATA_HOME/FunshiEngineGL con respaldo a ~/.local/share en Linux/macOS.
+// Carpeta de datos por usuario: %APPDATA%\FunshiEngineVK en Windows;
+// $XDG_DATA_HOME/FunshiEngineVK con respaldo a ~/.local/share en Linux/macOS.
 // Vacia si el proceso no tiene carpeta de usuario definida.
 std::string directorioDatosUsuario() {
 #ifdef _WIN32
     const char* appdata = std::getenv("APPDATA");
-    if (appdata && *appdata) return std::string(appdata) + "/FunshiEngineGL";
+    if (appdata && *appdata)
+        return std::string(appdata) + "/" + NombreProducto::kNombre;
 #else
     const char* xdg = std::getenv("XDG_DATA_HOME");
-    if (xdg && *xdg) return std::string(xdg) + "/FunshiEngineGL";
+    if (xdg && *xdg)
+        return std::string(xdg) + "/" + NombreProducto::kNombre;
     const char* home = std::getenv("HOME");
-    if (home && *home) return std::string(home) + "/.local/share/FunshiEngineGL";
+    if (home && *home)
+        return std::string(home) + "/.local/share/" + NombreProducto::kNombre;
 #endif
     return std::string();
 }

@@ -1,5 +1,5 @@
 ; ============================================================================
-;  FunshiEngineGL - Instalador Windows (Inno Setup 6)
+;  FunshiEngineVK - Instalador Windows (Inno Setup 6)
 ; ============================================================================
 ;  PARA PUBLICAR UNA BETA / ALPHA / DEMO:
 ;    1. Edita MiVersion y MiCanal abajo. MiVersion tiene que coincidir con
@@ -7,19 +7,19 @@
 ;       empaqueta): al publicar desde GitHub Actions el numero sale del tag y
 ;       este archivo se reescribe solo, asi que ahi no hay que tocar nada.
 ;    2. Ejecuta HacerInstalador.bat (monta packaging/dist/ y compila este
-;       script con ISCC). Alternativa manual: ISCC.exe FunshiEngineGL_setup.iss
+;       script con ISCC). Alternativa manual: ISCC.exe FunshiEngineVK_setup.iss
 ;    3. El instalador queda en packaging/instalador/.
 ;
 ;  Cada canal genera un archivo distinto (evita confusiones entre builds):
-;    Demo  -> FunshiEngineGL-0.5.0-demo-setup.exe
-;    Alpha -> FunshiEngineGL-0.5.0-alpha-setup.exe
-;    Beta  -> FunshiEngineGL-0.5.0-beta-setup.exe
+;    Demo  -> FunshiEngineVK-0.5.0-demo-setup.exe
+;    Alpha -> FunshiEngineVK-0.5.0-alpha-setup.exe
+;    Beta  -> FunshiEngineVK-0.5.0-beta-setup.exe
 ; ============================================================================
 
-#define MiNombre "FunshiEngineGL"
+#define MiNombre "FunshiEngineVK"
 #define MiVersion "0.5.0"
 #define MiCanal "alpha"          ; demo | alpha | beta | rc
-#define MiExe "FunshiEngineGL.exe"
+#define MiExe "FunshiEngineVK.exe"
 ; MiEdicion se construye con + (expresion evaluada por ISPP): un literal de
 ; cadena no expande las {#...} internas y quedarian como texto crudo.
 #define MiEdicion MiNombre + " " + MiVersion + " (" + MiCanal + ")"
@@ -30,16 +30,16 @@ AppId={#MiId}
 AppName={#MiEdicion}
 AppVersion={#MiVersion}-{#MiCanal}
 AppVerName={#MiEdicion}
-AppPublisher=FunshiEngineGL
-AppComments=Camara y editor de escenas 3D con OpenGL e ImGui
-DefaultDirName={autopf}\FunshiEngineGL
-DefaultGroupName=FunshiEngineGL
+AppPublisher=FunshiEngineVK
+AppComments=Camara y editor de escenas 3D con Vulkan e ImGui
+DefaultDirName={autopf}\FunshiEngineVK
+DefaultGroupName=FunshiEngineVK
 UninstallDisplayIcon={app}\{#MiExe}
 Compression=lzma2
 SolidCompression=yes
 SourceDir=dist
 OutputDir=instalador
-OutputBaseFilename=FunshiEngineGL-{#MiVersion}-{#MiCanal}-setup
+OutputBaseFilename=FunshiEngineVK-{#MiVersion}-{#MiCanal}-setup
 ; x64 solamente: el proyecto usa Assimp/Bullet/GLFW de 64 bits (vcpkg x64-windows).
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

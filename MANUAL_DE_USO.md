@@ -5,7 +5,7 @@
     SPDX-License-Identifier: Apache-2.0
 -->
 
-# Manual de uso de FunshiEngineGL
+# Manual de uso de FunshiEngineVK
 
 Guia practica para usuarios del editor: como montar una escena, asignar assets
 por arrastre y escribir scripts con la API exacta que expone el motor.
@@ -55,7 +55,7 @@ tiene Vulkan, el backend no arranca y el editor abre sin dibujar.
 ```bash
 cmake -S FunshiEngineGL -B FunshiEngineGL/build
 cmake --build FunshiEngineGL/build -j$(nproc)
-./FunshiEngineGL/build/FunshiEngineGL
+./FunshiEngineGL/build/FunshiEngineVK
 ```
 
 El backend se puede dejar de compilar con `-DFUNSHI_VULKAN=OFF` (el editor
@@ -89,29 +89,29 @@ Al crear un proyecto, el motor genera la estructura bajo
 > **Dónde quedan los datos.** `{app}` es la carpeta del ejecutable cuando el
 > motor está en una carpeta donde puede escribir: el build de desarrollo y
 > también la instalación de Windows, que es por usuario
-> (`%LOCALAPPDATA%\Programs\FunshiEngineGL`, sin pedir permisos de
+> (`%LOCALAPPDATA%\Programs\FunshiEngineVK`, sin pedir permisos de
 > administrador). Si el motor está en una carpeta donde no puede escribir —una
 > copia en `Program Files`, una carpeta montada en solo lectura, el motor
 > lanzado como administrador—, usa en su lugar
-> `%APPDATA%\FunshiEngineGL\MotorGrafico` (Windows) o
-> `$XDG_DATA_HOME/FunshiEngineGL/MotorGrafico`, con respaldo en
-> `~/.local/share/FunshiEngineGL/MotorGrafico` (Linux y macOS). La ruta
+> `%APPDATA%\FunshiEngineVK\MotorGrafico` (Windows) o
+> `$XDG_DATA_HOME/FunshiEngineVK/MotorGrafico`, con respaldo en
+> `~/.local/share/FunshiEngineVK/MotorGrafico` (Linux y macOS). La ruta
 > efectiva se imprime por consola al arrancar y la migración de la carpeta
 > anterior, si había algo, se avisa en la barra de estado. Los proyectos que
 > migran siguen funcionando: las rutas de assets se guardan relativas al
 > proyecto, no absolutas.
 >
-> El log de arranque (`logs/FunshiEngineGL_<AAAAMMDD_HHMMSS>.log`, ver el árbol)
+> El log de arranque (`logs/FunshiEngineVK_<AAAAMMDD_HHMMSS>.log`, ver el árbol)
 > vive también en esa carpeta de datos, de modo que se escribe aunque el motor
 > esté en una carpeta de la que no se pueda escribir. Si esa carpeta tampoco
 > admite escritura, el motor cae a la carpeta temporal del sistema
-> (`%TEMP%\FunshiEngineGL\logs` o `/tmp/FunshiEngineGL/logs`), y solo si las tres
+> (`%TEMP%\FunshiEngineVK\logs` o `/tmp/FunshiEngineVK/logs`), y solo si las tres
 > opciones fallan se queda sin archivo de log y escribe en la consola.
 
 ```
 MotorGrafico/
 ├── logs/
-│   └── FunshiEngineGL_<AAAAMMDD_HHMMSS>.log   ← log de arranque (UTC), uno por ejecucion
+│   └── FunshiEngineVK_<AAAAMMDD_HHMMSS>.log   ← log de arranque (UTC), uno por ejecucion
 ├── Proyects/
 │   └── <proyecto>/
 │       ├── Memory/
@@ -869,7 +869,7 @@ ejecuta durante Depuración y Juego.
 - La ventana **Estado** muestra el toolchain (compilador C++, javac, libjvm,
   cache) y el resultado de compilacion/carga de cada script de la escena.
 - Los errores de carga/compilacion se informan en la ventana **Estado** y en el
-  log del motor (`logs/FunshiEngineGL_*.log` en la carpeta de datos, seccion 2);
+  log del motor (`logs/FunshiEngineVK_*.log` en la carpeta de datos, seccion 2);
   el panel del componente no los repite: queda con el fuente asignado y sus
   SerializeField.
 
@@ -1267,7 +1267,7 @@ la JVM (`motivo:`), la carpeta de caché, dónde se buscaron las clases y con qu
 `javac` y `libjvm`. Con eso se distingue de un vistazo entre "el `.java` no
 compiló", "la clase no existe" y "el `.class` es de otra versión de Java".
 
-El instalador de Windows (`FunshiEngineGL_setup.iss`) comprueba si hay un JDK
+El instalador de Windows (`FunshiEngineVK_setup.iss`) comprueba si hay un JDK
 antes de instalar —exige `bin\server\jvm.dll` **y** `bin\javac.exe`, los dos, que
 es lo mismo que necesita el motor— y, si no lo encuentra, ofrece descargar e
 instalar Temurin JDK 17. El paquete de Linux (Qt IFW) no puede encadenar

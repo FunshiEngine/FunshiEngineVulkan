@@ -138,7 +138,7 @@ Windows combinado con un instalador que corre elevado y un ejecutable que no.
 
 El motor guardaba **todos** sus datos de usuario (proyectos, escenas,
 configuraciones, `imgui.ini`) en `<directorioEjecutable>/MotorGrafico`. Con el
-instalador de Windows eso resuelve a `C:\Program Files\FunshiEngineGL\MotorGrafico`,
+instalador de Windows eso resuelve a `C:\Program Files\FunshiEngineVK\MotorGrafico`,
 donde el proceso **no puede escribir**.
 
 ### 6.2 Síntomas

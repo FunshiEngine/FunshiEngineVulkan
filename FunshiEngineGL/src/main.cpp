@@ -29,6 +29,7 @@
 #include "../src/Scenes/GameScene.h"
 #include "../src/GUIManager/GUIManager.h"
 #include "../src/Configuracion/EditorConfig.h"
+#include "../src/Configuracion/NombreProducto.h"
 #include "../src/Configuracion/ProjectPaths.h"
 #include "../src/Configuracion/ProyectoInicial.h"
 #include "../src/Configuracion/RutasLog.h"
@@ -133,7 +134,8 @@ static std::string redirigirSalidaALog(char* argv0) {
     const std::tm tmUtc = *std::gmtime(&ahora);
     char sufijo[32];
     std::strftime(sufijo, sizeof(sufijo), "%Y%m%d_%H%M%S", &tmUtc);
-    const std::string nombre = "FunshiEngineGL_" + std::string(sufijo) + ".log";
+    const std::string nombre =
+        std::string(NombreProducto::kNombre) + "_" + std::string(sufijo) + ".log";
 
     for (const std::string& carpeta :
          RutasLog::candidatas(ProjectPaths::directorioBase(),
@@ -149,8 +151,8 @@ static std::string redirigirSalidaALog(char* argv0) {
             // stderr sin redirigir no es motivo para renunciar: stdout ya lleva
             // el log y el resto de la salida (cout) sigue llegando ahi.
             std::freopen(ruta.c_str(), "a", stderr);
-            std::cout << "\n========== Arranque FunshiEngineGL " << sufijo
-                      << " ==========\n";
+            std::cout << "\n========== Arranque " << NombreProducto::kNombre
+                      << " " << sufijo << " ==========\n";
             std::cout << "Log en: " << ruta << "\n";
             return ruta;
         } catch (...) {
@@ -266,7 +268,7 @@ static int EjecutarMotor(int argc, char* argv[])
 #endif
     std::set_terminate(registrarExcepcionNoCapturada);
     // Parseo simple de --proyecto <nombre> para arrancar directo en editor
-    // (skip menu). Usado para ejecutar un juego exportado: FunshiEngineGL
+    // (skip menu). Usado para ejecutar un juego exportado: FunshiEngineVK
     // --proyecto MiJuego. --juego fuerza el modo juego, que es como arranca
     // una exportacion (tambien via JuegoExportado.json, ver mas abajo).
     std::string proyectoCLI;

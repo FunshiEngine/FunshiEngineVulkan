@@ -47,25 +47,25 @@ escupe texto a ninguna consola.
   terminal.
 - **`./ejecutar.sh`** (solo Linux): compila si hace falta y lanza el editor
   desacoplado (en segundo plano) escribiendo al log. En Windows no funciona
-  (es un script de bash que espera el binario `build/FunshiEngineGL` sin
-  `.exe`); la via equivalente es lanzar `build\FunshiEngineGL.exe` como se
+  (es un script de bash que espera el binario `build/FunshiEngineVK` sin
+  `.exe`); la via equivalente es lanzar `build\FunshiEngineVK.exe` como se
   indica abajo.
 - **Escritorio Linux** (`.desktop` en `~/.local/share/applications/`):
 
   ```
   [Desktop Entry]
-  Name=FunshiEngineGL
-  Exec=/ruta/a/FunshiEngineGL/build/FunshiEngineGL
+  Name=FunshiEngineVK
+  Exec=/ruta/a/FunshiEngineGL/build/FunshiEngineVK
   Type=Application
   ```
 
-Solo el lanzamiento **manual desde una terminal** (`./FunshiEngineGL`)
+Solo el lanzamiento **manual desde una terminal** (`./FunshiEngineVK`)
 mantiene esa terminal como padre del proceso; incluso ahi la salida ya va al
 log y la terminal no muestra basura.
 
 ### 1.1 Lanzar en Windows
 
-El binario de Windows (`build\FunshiEngineGL.exe`, construido como app GUI, sin
+El binario de Windows (`build\FunshiEngineVK.exe`, construido como app GUI, sin
 consola) se lanza igual que en Linux, pero la **carpeta de trabajo (`cwd`)
 importa**: los assets relativos —en particular la carpeta `Imagenes/` con los
 36 iconos del explorador— se buscan primero junto al ejecutable y despues
@@ -75,7 +75,7 @@ log. Por eso:
 
 ```bat
 cd FunshiEngineGL
-build\FunshiEngineGL.exe
+build\FunshiEngineVK.exe
 ```
 
 Lanzar con doble clic desde el Explorador equivale a lo mismo (el `cwd` es la
@@ -86,7 +86,7 @@ resolvio `Imagenes/`.
 ## 2. Logs
 
 - Carpeta: `logs/` **junto al ejecutable** (se crea sola).
-- Archivo: `FunshiEngineGL_AAAAMMDD_HHMMSS.log` (uno por arranque, con
+- Archivo: `FunshiEngineVK_AAAAMMDD_HHMMSS.log` (uno por arranque, con
   timestamp UTC), en modo append si ya existia.
 - Contiene el diagnostico de GPU, los mensajes `[diag]` del render y cualquier
   error (`[MeshRenderer]`, `[IconosGUI]`, etc.).

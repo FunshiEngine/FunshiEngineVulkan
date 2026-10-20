@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package>
-    <DisplayName>FunshiEngineGL</DisplayName>
+    <DisplayName>FunshiEngineVK</DisplayName>
 
     <Description>
-        Motor gráfico 3D desarrollado en C++ con OpenGL, ImGui, Bullet Physics y Assimp.
+        Motor gráfico 3D desarrollado en C++ con Vulkan, ImGui, Bullet Physics y Assimp.
 
         REQUISITO: JDK (Java Development Kit) 11 o superior.
         Los scripts Java del motor se compilan con javac y se cargan en una JVM,
@@ -22,7 +22,7 @@
     <Essential>true</Essential>
 
     <License>
-        <Name>Licencia de FunshiEngineGL</Name>
+        <Name>Licencia de FunshiEngineVK</Name>
         <File>license.txt</File>
     </License>
 </Package>

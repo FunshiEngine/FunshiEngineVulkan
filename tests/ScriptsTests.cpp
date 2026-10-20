@@ -953,9 +953,9 @@ CHECK(RutaCabecerasScript::resolver(relativaSoloJuntoAlExe, "",
         const std::filesystem::path raizRepo =
             std::filesystem::path(__FILE__).parent_path().parent_path();
         const std::filesystem::path iss = raizRepo / "FunshiEngineGL" / "packaging" /
-                             "FunshiEngineGL_setup.iss";
+                             "FunshiEngineVK_setup.iss";
         std::ifstream f(iss);
-        CHECK(f.good(), "se encuentra FunshiEngineGL_setup.iss para auditarlo");
+        CHECK(f.good(), "se encuentra FunshiEngineVK_setup.iss para auditarlo");
         std::string texto((std::istreambuf_iterator<char>(f)),
                           std::istreambuf_iterator<char>());
 

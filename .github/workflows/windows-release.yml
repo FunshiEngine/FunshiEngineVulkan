@@ -61,7 +61,7 @@ jobs:
           -DFUNSHI_VERSION=${{ steps.ver.outputs.version }}
 
       - name: Compilar engine
-        run: cmake --build build --config Release --target FunshiEngineGL
+        run: cmake --build build --config Release --target FunshiEngineVK
 
       - name: Compilar pruebas
         run: cmake --build build --config Release --target terminal-emulator-tests diagnostic-registry-tests filemanager-tests configuracion-tests eventbus-tests menu-tests assetmanager-tests texturemanager-tests estructuras-tests rendering-tests scripts-tests scripts-runtime-tests audio-tests interface-component-tests barra-progreso-tests scripts-java-tests model-serialization-tests manifiesto-assets-tests orquestador-estado-tests tema-tests comandos-tests escena-serializacion-tests proceso-tests prefab-tests catalogo-componentes-tests interfaces-juego-tests uniformes-vulkan-tests
@@ -80,7 +80,7 @@ jobs:
       - name: Versionar instalador con el tag
         shell: pwsh
         run: |
-          $iss = "$env:GITHUB_WORKSPACE\FunshiEngineGL\packaging\FunshiEngineGL_setup.iss"
+          $iss = "$env:GITHUB_WORKSPACE\FunshiEngineGL\packaging\FunshiEngineVK_setup.iss"
           (Get-Content -Raw $iss) `
             -replace '#define MiVersion "[^"]*"', "#define MiVersion `"${{ steps.ver.outputs.version }}`"" `
             -replace '#define MiCanal "[^"]*"', '#define MiCanal "release"' `
@@ -95,11 +95,11 @@ jobs:
             $iscc = (Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -Recurse -ErrorAction SilentlyContinue |
                      Select-Object -First 1 -ExpandProperty FullName)
           }
-          & $iscc "$env:GITHUB_WORKSPACE\FunshiEngineGL\packaging\FunshiEngineGL_setup.iss"
+          & $iscc "$env:GITHUB_WORKSPACE\FunshiEngineGL\packaging\FunshiEngineVK_setup.iss"
 
       - name: Subir instalador como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: FunshiEngineGL-setup
+          name: FunshiEngineVK-setup
           path: FunshiEngineGL\packaging\dist\instalador\*.exe
           if-no-files-found: error

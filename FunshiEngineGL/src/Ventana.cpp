@@ -32,6 +32,7 @@
 #include <iostream>
 #include <vector>
 
+#include "Configuracion/NombreProducto.h"
 #include "Rendering/Backend/IRenderBackend.h"
 #include "Herramientas/IconosGUI/stb_image.h"
 
@@ -62,7 +63,7 @@ std::string directorioEjecutable() {
 // o un nivel arriba, y fallback relativo al cwd). El logo esta en
 // Imagenes/Logo/.
 std::string ubicarLogoVentana() {
-    const char* nombre = "Logo/FunshiEngineGL_Isotipo_Blanco.png";
+    const char* nombre = "Logo/FunshiEngineVK_Isotipo_Blanco.png";
     const std::string exeDir = directorioEjecutable();
     std::vector<std::string> carpetas;
     if (!exeDir.empty()) {
@@ -146,7 +147,8 @@ int Ventana::initVentana() {
     // y en una API sin swapchain no existe.
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    window = glfwCreateWindow(width, height, "FunshiEngineGL", nullptr, nullptr);
+    window = glfwCreateWindow(width, height, NombreProducto::kNombre, nullptr,
+                              nullptr);
     if (!window) {
         std::cerr << "[Ventana] No se pudo crear la ventana del motor."
                   << std::endl;

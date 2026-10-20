@@ -18,6 +18,8 @@
 */
 #include "BackendVulkan.h"
 
+#include "../../Configuracion/NombreProducto.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -248,9 +250,9 @@ void BackendVulkan::liberarBuffersRetirados() {
 bool BackendVulkan::crearInstancia() {
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    app.pApplicationName = "FunshiEngineGL";
+    app.pApplicationName = NombreProducto::kNombre;
     app.applicationVersion = VK_MAKE_VERSION(0, 5, 4);
-    app.pEngineName = "FunshiEngineGL";
+    app.pEngineName = NombreProducto::kNombre;
     app.engineVersion = VK_MAKE_VERSION(0, 5, 4);
     // Se pide 1.1: es la version minima con la que el motor funciona (con
     // swapchain y render passes clasicos) y la que tiene mas cobertura de

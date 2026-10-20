@@ -1,0 +1,14 @@
+[Desktop Entry]
+# FunshiEngineVK - lanzador de escritorio (Linux).
+# Copiar a ~/.local/share/applications/FunshiEngineVK.desktop y ajustar las
+# rutas al lugar donde se instalo el motor. En un instalador IFW por defecto:
+#   Exec=/home/USUARIO/Desktop/FunshiEngineVK/FunshiEngineVK
+#   Icon=/home/USUARIO/Desktop/FunshiEngineVK/Imagenes/logo_256.png
+Type=Application
+Name=FunshiEngineVK
+Comment=Editor de escenas 3D de FunshiEngineVK
+Exec=<RUTA_INSTALACION>/FunshiEngineVK
+Icon=<RUTA_INSTALACION>/Imagenes/logo_256.png
+Terminal=false
+Categories=Development;Graphics;
+Keywords=3D;motor;editor;escenas;

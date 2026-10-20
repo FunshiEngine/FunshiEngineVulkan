@@ -1,6 +1,6 @@
 # Flujo de ramas del repositorio
 
-Convención de ramas de FunshiEngineGL. Define los nombres genéricos que viven en
+Convención de ramas de FunshiEngineVK. Define los nombres genéricos que viven en
 el remoto, para qué sirve cada uno y el camino que sigue cada cambio desde que se
 escribe hasta que llega al código estable.
 
