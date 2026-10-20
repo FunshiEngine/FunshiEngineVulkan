@@ -389,6 +389,9 @@ option(FUNSHI_VULKAN "Compilar el backend de Vulkan" ON)
 if(FUNSHI_VULKAN)
     find_package(Vulkan REQUIRED)
     target_link_libraries(funshi_engine PRIVATE Vulkan::Vulkan)
+    # La fachada de la interfaz compila el backend de render segun la API
+    # grafica que hay en este repositorio.
+    target_compile_definitions(funshi_engine PRIVATE FUNSHI_VULKAN=1)
 
     # --- Shaders ---------------------------------------------------------------
     #
@@ -480,6 +483,11 @@ if(FUNSHI_VULKAN)
         CXX_EXTENSIONS OFF
     )
     add_test(NAME vulkan-backend-tests COMMAND vulkan-backend-tests)
+else()
+    target_compile_definitions(funshi_engine PRIVATE FUNSHI_VULKAN=0)
+    # Sin el backend de Vulkan no se compila el de ImGui: hace falta la
+    # libreria de Vulkan para compilarlo.
+    list(REMOVE_ITEM SOURCES ${SRC_DIR}/ImGui/imgui_impl_vulkan.cpp)
 endif()
 
 # Bullet Physics

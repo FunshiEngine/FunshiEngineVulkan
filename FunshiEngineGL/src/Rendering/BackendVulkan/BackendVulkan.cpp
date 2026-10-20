@@ -43,6 +43,12 @@ constexpr uint32_t kMaxConjuntos = 4096;
 // peor caso.
 constexpr uint32_t kMaxSamplers = 4;
 
+// El backend de Vulkan activo (lo consulta la fachada de la interfaz) y la
+// conversion de texturas que la fachada registra.
+BackendVulkan* gBackendActivo = nullptr;
+ConversionTextura gConversionTextura = nullptr;
+void* gContextoConversion = nullptr;
+
 // Registra un fallo de Vulkan con su codigo.
 void reportarError(const char* donde, VkResult resultado) {
     std::cerr << "[Vulkan] " << donde << ": fallo VkResult " << resultado
@@ -59,9 +65,33 @@ bool ok(VkResult resultado, const char* donde) {
 
 } // namespace
 
-BackendVulkan::BackendVulkan() = default;
+// ---------------------------------------------------------------------------
+// Registro del backend y de la interfaz
+// ---------------------------------------------------------------------------
+
+BackendVulkan* backendVulkanActivo() {
+    return gBackendActivo;
+}
+
+void registrarConversionTextura(ConversionTextura conversion, void* contexto) {
+    gConversionTextura = conversion;
+    gContextoConversion = contexto;
+}
+
+ConversionTextura conversionTexturaActiva() {
+    return gConversionTextura;
+}
+
+void* contextoConversionTextura() {
+    return gContextoConversion;
+}
+
+BackendVulkan::BackendVulkan() {
+    gBackendActivo = this;
+}
 
 BackendVulkan::~BackendVulkan() {
+    if (gBackendActivo == this) gBackendActivo = nullptr;
     if (dispositivo_) {
         vkDeviceWaitIdle(dispositivo_);
 
@@ -159,8 +189,14 @@ BackendVulkan::~BackendVulkan() {
         memoriasRetiradas_.clear();
 
         destruirSwapchain();
+        for (VkFramebuffer framebuffer : framebuffersInterfaz_)
+            if (framebuffer)
+                funciones_.vkDestroyFramebuffer(dispositivo_, framebuffer, nullptr);
+        framebuffersInterfaz_.clear();
         if (renderPassSwapchain_)
             funciones_.vkDestroyRenderPass(dispositivo_, renderPassSwapchain_, nullptr);
+        if (renderPassInterfaz_)
+            funciones_.vkDestroyRenderPass(dispositivo_, renderPassInterfaz_, nullptr);
         if (renderPassObjetivo_)
             funciones_.vkDestroyRenderPass(dispositivo_, renderPassObjetivo_, nullptr);
         if (imagenMSAA_)
@@ -343,6 +379,39 @@ bool BackendVulkan::crearDispositivo() {
     info.pQueueCreateInfos = &infoCola;
     info.pEnabledFeatures = &funciones;
 
+    // Con ventana hay que habilitar la extension del swapchain en el
+    // dispositivo: sin ella el swapchain no se puede crear (la extension de
+    // la superficie es de nivel de instancia y ya la pidio GLFW).
+    std::vector<const char*> extensionesDispositivo;
+    if (superficie_) {
+        uint32_t cantidadExtensiones = 0;
+        vkEnumerateDeviceExtensionProperties(gpuFisico_, nullptr,
+                                             &cantidadExtensiones, nullptr);
+        std::vector<VkExtensionProperties> disponibles(cantidadExtensiones);
+        vkEnumerateDeviceExtensionProperties(gpuFisico_, nullptr,
+                                             &cantidadExtensiones,
+                                             disponibles.data());
+        bool haySwapchain = false;
+        for (const VkExtensionProperties& ext : disponibles) {
+            if (std::strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) ==
+                0) {
+                haySwapchain = true;
+                break;
+            }
+        }
+        if (!haySwapchain) {
+            std::cerr << "[Vulkan] La GPU no soporta la extension del swapchain."
+                      << std::endl;
+            return false;
+        }
+        extensionesDispositivo.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
+    info.enabledExtensionCount =
+        static_cast<uint32_t>(extensionesDispositivo.size());
+    info.ppEnabledExtensionNames = extensionesDispositivo.empty()
+                                       ? nullptr
+                                       : extensionesDispositivo.data();
+
     if (!ok(vkCreateDevice(gpuFisico_, &info, nullptr, &dispositivo_),
             "vkCreateDevice"))
         return false;
@@ -522,6 +591,15 @@ bool BackendVulkan::crearSwapchain() {
     espacioSwapchain_ = elegido.colorSpace;
     extensionSwapchain_ = extension;
     cantidadImagenesSwapchain_ = imagenes;
+
+    {
+        std::ostringstream diag;
+        diag << " | swapchain " << extension.width << "x" << extension.height
+             << " | " << imagenes << " imagenes | formato "
+             << static_cast<int>(elegido.format) << " | "
+             << muestras_ << " muestras";
+        diagnostico_ += diag.str();
+    }
     return true;
 }
 
@@ -637,6 +715,41 @@ bool BackendVulkan::crearRenderPassSwapchain() {
     if (!ok(funciones_.vkCreateRenderPass(dispositivo_, &info, nullptr,
                                           &renderPassSwapchain_),
             "vkCreateRenderPass (swapchain)"))
+        return false;
+
+    // Render pass de la interfaz: un solo attachment de color (la imagen del
+    // swapchain, ya resuelta) y sin profundidad. El pipeline que arma ImGui no
+    // lleva estado de profundidad, asi que no puede usarse en la pasada de la
+    // escena (que si lo tiene).
+    VkAttachmentDescription colorInterfaz{};
+    colorInterfaz.format = formatoSwapchain_;
+    colorInterfaz.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorInterfaz.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorInterfaz.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorInterfaz.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorInterfaz.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorInterfaz.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorInterfaz.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference refColorInterfaz{};
+    refColorInterfaz.attachment = 0;
+    refColorInterfaz.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpassInterfaz{};
+    subpassInterfaz.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpassInterfaz.colorAttachmentCount = 1;
+    subpassInterfaz.pColorAttachments = &refColorInterfaz;
+
+    VkRenderPassCreateInfo infoInterfaz{};
+    infoInterfaz.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    infoInterfaz.attachmentCount = 1;
+    infoInterfaz.pAttachments = &colorInterfaz;
+    infoInterfaz.subpassCount = 1;
+    infoInterfaz.pSubpasses = &subpassInterfaz;
+
+    if (!ok(funciones_.vkCreateRenderPass(dispositivo_, &infoInterfaz, nullptr,
+                                          &renderPassInterfaz_),
+            "vkCreateRenderPass (interfaz)"))
         return false;
 
     return true;
@@ -863,6 +976,29 @@ bool BackendVulkan::crearRecursosDeFrame() {
         framebuffersSwapchain_.push_back(framebuffer);
     }
 
+    // Framebuffers de la interfaz: uno por imagen del swapchain, con la sola
+    // vista de color (la imagen ya resuelta por la pasada de la escena).
+    for (VkFramebuffer framebuffer : framebuffersInterfaz_)
+        if (framebuffer)
+            funciones_.vkDestroyFramebuffer(dispositivo_, framebuffer, nullptr);
+    framebuffersInterfaz_.clear();
+    for (VkImageView vistaImagen : vistasSwapchain_) {
+        VkFramebufferCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass = renderPassInterfaz_;
+        info.attachmentCount = 1;
+        info.pAttachments = &vistaImagen;
+        info.width = extensionSwapchain_.width;
+        info.height = extensionSwapchain_.height;
+        info.layers = 1;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        if (!ok(funciones_.vkCreateFramebuffer(dispositivo_, &info, nullptr,
+                                               &framebuffer),
+                "vkCreateFramebuffer (interfaz)"))
+            return false;
+        framebuffersInterfaz_.push_back(framebuffer);
+    }
+
     // Semaforos del frame (adquirir y presentar). El fence del frame se crea
     // con el dispositivo: no depende del swapchain.
     VkSemaphoreCreateInfo infoSema{};
@@ -1065,6 +1201,7 @@ void BackendVulkan::beginFrame() {
     destino_ = DestinoActual::Ninguno;
     destinoObjetivo_ = kInvalidHandle;
     pendienteLimpiar_ = false;
+    imagenEnPresentacion_ = false;
 }
 
 void BackendVulkan::endFrame() {
@@ -1073,8 +1210,11 @@ void BackendVulkan::endFrame() {
     cerrarRenderPass();
 
     // La imagen del swapchain vuelve al layout de presentacion antes de
-    // mostrarse: el render pass la deja en COLOR_ATTACHMENT_OPTIMAL.
-    if (swapchainAdquirido_ && !imagenesSwapchain_.empty()) {
+    // mostrarse: el render pass la deja en COLOR_ATTACHMENT_OPTIMAL. Si la
+    // pasada de la interfaz ya se abrio, la imagen quedo en el layout de
+    // presentacion y no hay que volver a transicionarla.
+    if (swapchainAdquirido_ && !imagenesSwapchain_.empty() &&
+        !imagenEnPresentacion_) {
         VkImageMemoryBarrier barrera{};
         barrera.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrera.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;

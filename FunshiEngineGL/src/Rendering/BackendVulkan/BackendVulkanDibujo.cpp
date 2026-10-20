@@ -179,6 +179,52 @@ void BackendVulkan::bindDefaultFramebuffer() {
 }
 
 // ---------------------------------------------------------------------------
+// Interfaz
+// ---------------------------------------------------------------------------
+
+// Abre la pasada de la interfaz.
+//
+// La interfaz se dibuja al final del frame, sobre la imagen del swapchain ya
+// resuelta, en una pasada propia sin profundidad: el pipeline que arma ImGui
+// no lleva estado de profundidad y no puede usarse en la pasada de la escena.
+//
+// La pasada deja la imagen en el layout de presentacion, asi que el frame no
+// la vuelve a transicionar.
+void BackendVulkan::abrirPasadaInterfaz() {
+    if (!comandoAbierto_ || !swapchainAdquirido_) return;
+    // Si la pasada de la escena sigue abierta, se cierra: la interfaz se
+    // dibuja en una pasada propia, encima.
+    cerrarRenderPass();
+    if (destino_ != DestinoActual::Ninguno) return;
+    if (!renderPassInterfaz_ || framebuffersInterfaz_.empty()) return;
+    if (indiceSwapchain_ >= framebuffersInterfaz_.size()) return;
+
+    VkClearValue colores[1]{};
+    colores[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+
+    VkRenderPassBeginInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    info.renderPass = renderPassInterfaz_;
+    info.framebuffer = framebuffersInterfaz_[indiceSwapchain_];
+    info.renderArea = {{0, 0}, extensionSwapchain_};
+    info.clearValueCount = 1;
+    info.pClearValues = colores;
+
+    funciones_.vkCmdBeginRenderPass(comando_, &info,
+                                    VK_SUBPASS_CONTENTS_INLINE);
+    destino_ = DestinoActual::Interfaz;
+}
+
+void BackendVulkan::cerrarPasadaInterfaz() {
+    if (destino_ != DestinoActual::Interfaz) return;
+
+    funciones_.vkCmdEndRenderPass(comando_);
+    destino_ = DestinoActual::Ninguno;
+    // La pasada deja la imagen en el layout de presentacion.
+    imagenEnPresentacion_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // Estado del pipeline
 // ---------------------------------------------------------------------------
 

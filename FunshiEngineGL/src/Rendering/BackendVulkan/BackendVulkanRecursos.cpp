@@ -889,6 +889,12 @@ Handle BackendVulkan::renderTargetColorTexture(Handle target) const {
 }
 
 void* BackendVulkan::imguiTextureId(Handle texture) const {
+    // La fachada de la interfaz sabe convertir la textura en el identificador
+    // que usa ImGui (en Vulkan es un conjunto de descriptores).
+    ConversionTextura conversion = conversionTexturaActiva();
+    if (conversion)
+        return conversion(texture, contextoConversionTextura());
+
     auto it = texturas_.find(texture);
     if (it == texturas_.end()) {
         // Puede ser el identificador de una vista de render target.
@@ -899,6 +905,30 @@ void* BackendVulkan::imguiTextureId(Handle texture) const {
         return nullptr;
     }
     return reinterpret_cast<void*>(it->second.vista);
+}
+
+bool BackendVulkan::texturaParaInterfaz(Handle textura,
+                                         TexturaInterfaz& salida) const {
+    auto it = texturas_.find(textura);
+    if (it != texturas_.end()) {
+        salida.vista = it->second.vista;
+        salida.sampler = it->second.sampler;
+        salida.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        return salida.vista != VK_NULL_HANDLE;
+    }
+
+    // Puede ser la vista del color de un render target (la vista previa de la
+    // interfaz): al cerrar la pasada su imagen queda en el layout de
+    // muestreo.
+    for (const auto& par : objetivos_) {
+        if (reinterpret_cast<Handle>(par.second.vistaColor) == textura) {
+            salida.vista = par.second.vistaColor;
+            salida.sampler = par.second.sampler;
+            salida.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            return true;
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------

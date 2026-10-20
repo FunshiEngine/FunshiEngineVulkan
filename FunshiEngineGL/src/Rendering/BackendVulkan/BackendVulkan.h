@@ -132,7 +132,8 @@ struct FuncionesDispositivo {
 enum class DestinoActual {
     Ninguno,
     Swapchain,
-    RenderTarget
+    RenderTarget,
+    Interfaz
 };
 
 // Clave del estado que el pipeline tiene que tener: un pipeline distinto por
@@ -378,6 +379,29 @@ public:
     const FuncionesDispositivo& funciones() const { return funciones_; }
     VkCommandPool poolComandos() const { return poolComandos_; }
     VkPhysicalDeviceMemoryProperties memoriaGpu() const { return memoriaGpu_; }
+    VkRenderPass renderPassInterfaz() const { return renderPassInterfaz_; }
+    uint32_t cantidadImagenesSwapchain() const { return cantidadImagenesSwapchain_; }
+
+    // --- Interfaz ----------------------------------------------------------
+    // La interfaz se dibuja en una pasada propia, sobre la imagen del
+    // swapchain y sin profundidad: el pipeline que arma ImGui no lleva
+    // estado de profundidad y no puede usarse en la pasada de la escena.
+    //
+    // La pasada se abre y se cierra desde la fachada de la interfaz, que es
+    // la que sabe enviar los draw lists al backend de ImGui.
+    void abrirPasadaInterfaz();
+    void cerrarPasadaInterfaz();
+    VkCommandBuffer comandoActual() const { return comando_; }
+
+    // Datos de la textura que la interfaz muestra: la vista, el sampler y el
+    // layout de la imagen. El backend de ImGui necesita los tres para crear
+    // su descriptor.
+    struct TexturaInterfaz {
+        VkImageView vista = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    };
+    bool texturaParaInterfaz(Handle textura, TexturaInterfaz& salida) const;
 
 private:
     // --- Creacion de recursos ---------------------------------------------
@@ -484,6 +508,10 @@ private:
     // Render passes.
     VkRenderPass renderPassSwapchain_ = VK_NULL_HANDLE;
     VkRenderPass renderPassObjetivo_ = VK_NULL_HANDLE;
+    // Render pass de la interfaz: un solo attachment de color (la imagen del
+    // swapchain) y sin profundidad.
+    VkRenderPass renderPassInterfaz_ = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> framebuffersInterfaz_;
     VkImage imagenMSAA_ = VK_NULL_HANDLE;
     VkDeviceMemory memoriaMSAA_ = VK_NULL_HANDLE;
     VkImageView vistaMSAA_ = VK_NULL_HANDLE;
@@ -500,6 +528,9 @@ private:
     // Estado de la pasada.
     DestinoActual destino_ = DestinoActual::Ninguno;
     Handle destinoObjetivo_ = kInvalidHandle;
+    // La imagen del swapchain ya quedo en el layout de presentacion (la
+    // pasada de la interfaz la deja ahi), asi que el frame no la cambia.
+    bool imagenEnPresentacion_ = false;
     float colorLimpieza_[3] = {0.0f, 0.0f, 0.0f};
     bool pendienteLimpiar_ = false;
     int viewport_[4] = {0, 0, 0, 0};
@@ -545,6 +576,30 @@ private:
     // Texto del diagnostico de arranque.
     std::string diagnostico_;
 };
+
+// ---------------------------------------------------------------------------
+// Registro del backend y de la interfaz
+// ---------------------------------------------------------------------------
+
+// El backend de Vulkan activo.
+//
+// La fachada de la interfaz lo usa para engancharse: el backend de ImGui
+// necesita la instancia, el dispositivo, el render pass y los descriptores
+// del backend grafico, y el motor no habla con el backend de ImGui.
+BackendVulkan* backendVulkanActivo();
+
+// Conversion de una textura del motor en el identificador que usa la
+// interfaz.
+//
+// En Vulkan el identificador de una textura es un conjunto de descriptores (lo
+// crea el backend de ImGui) y no la vista de la imagen, asi que es la fachada
+// de la interfaz la que sabe convertirlo. La fachada registra la conversion
+// cuando se inicializa; si no hay ninguna, el backend devuelve la vista de
+// la imagen.
+using ConversionTextura = void* (*)(Handle textura, void* contexto);
+void registrarConversionTextura(ConversionTextura conversion, void* contexto);
+ConversionTextura conversionTexturaActiva();
+void* contextoConversionTextura();
 
 } // namespace Vulkan
 } // namespace Backend
