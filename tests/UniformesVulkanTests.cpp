@@ -19,11 +19,16 @@
 // Pruebas headless de la escritura de matrices en el bloque de uniformes.
 //
 // El bloque de uniformes es un UBO en std140: la matriz 4x4 ocupa 64 bytes
-// (cuatro columnas de 16) y la 3x3 ocupa 48 bytes (tres columnas de 16, con
-// 12 bytes de padding que el shader lee como ceros). Escribir de mas en ese
-// bloque no lo rompe por la via de Vulkan: pisa la memoria del proceso, y el
-// fallo aparece mucho despues y en otro sitio (el mapa de programas del
-// backend queda con basura y la busqueda siguiente revienta).
+// (cuatro columnas de 16) y la 3x3 ocupa 48 bytes (tres columnas de 16). En
+// la 3x3 el relleno va entre columnas, no al final: cada columna guarda sus
+// tres floats y los cuatro bytes siguientes son relleno, asi que la segunda
+// columna arranca 16 bytes despues de la primera y la tercera, 16 mas. Es el
+// layout que declara el shader compilado (MatrixStride 16).
+//
+// Escribir de mas en ese bloque no lo rompe por la via de Vulkan: pisa la
+// memoria del proceso, y el fallo aparece mucho despues y en otro sitio (el
+// mapa de programas del backend queda con basura y la busqueda siguiente
+// revienta).
 //
 // Por eso el test mide el efecto exacto: escribe la matriz en un bloque con
 // un canario detras y comprueba que el canario quedo intacto. Es la unica
@@ -91,8 +96,8 @@ int main() {
                   "la matriz 4x4 no escribe fuera del bloque de uniformes");
     }
 
-    // 2. La matriz 3x3 deja a cero los 12 bytes de padding de std140 y no
-    // toca el canario.
+    // 2. La matriz 3x3 se reparte en tres columnas separadas por el relleno
+    // de std140 y no toca el canario.
     {
         float buffer[12 + kFloatsCanario + kFloatsHolgura];
         for (int i = 0; i < 12 + kFloatsCanario + kFloatsHolgura; ++i)
@@ -105,18 +110,22 @@ int main() {
             matriz);
 
         comprobar(ok, "la matriz 3x3 se escribe en un bloque que la entra");
-        bool valoresCorrectos = true;
-        for (int i = 0; i < 9; ++i) {
-            if (buffer[i] != matriz[i]) valoresCorrectos = false;
+        // Cada columna ocupa 16 bytes: sus tres floats y cuatro de relleno.
+        bool columnasEnSuLugar = true;
+        for (int columna = 0; columna < 3; ++columna) {
+            for (int fila = 0; fila < 3; ++fila) {
+                if (buffer[columna * 4 + fila] != matriz[columna * 3 + fila])
+                    columnasEnSuLugar = false;
+            }
         }
-        comprobar(valoresCorrectos,
-                  "la matriz 3x3 se copia con los valores que tiene");
-        bool paddingACero = true;
-        for (int i = 9; i < 12; ++i) {
-            if (buffer[i] != 0.0f) paddingACero = false;
+        comprobar(columnasEnSuLugar,
+                  "la matriz 3x3 deja cada columna en su lugar de std140");
+        bool rellenoACero = true;
+        for (int columna = 0; columna < 3; ++columna) {
+            if (buffer[columna * 4 + 3] != 0.0f) rellenoACero = false;
         }
-        comprobar(paddingACero,
-                  "la matriz 3x3 deja a cero el padding de std140");
+        comprobar(rellenoACero,
+                  "la matriz 3x3 deja a cero el relleno entre columnas");
         bool canarioIntacto = true;
         for (int i = 12; i < 12 + kFloatsCanario; ++i) {
             if (buffer[i] != kPatronCanario) canarioIntacto = false;

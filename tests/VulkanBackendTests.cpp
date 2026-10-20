@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -70,6 +71,14 @@ void escribirMatriz(Vulkan::BackendVulkan& backend, Handle programa,
     CHECK(location >= 0, std::string("el programa de malla expone el uniforme ") +
                              nombre);
     if (location >= 0) backend.setUniformMat4(location, valor);
+}
+
+// Nombre de un elemento de un array de uniformes: el contrato expone el
+// nombre del array y el indice va entre corchetes.
+std::string nombreDeElemento(const char* nombre, int indice) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%s[%d]", nombre, indice);
+    return std::string(buffer);
 }
 
 } // namespace
@@ -254,6 +263,84 @@ int main() {
                     CHECK(std::abs(static_cast<int>(pixel[canal]) -
                                    esperado[canal]) <= 2,
                           "el pixel dibujado tiene el color del material");
+                }
+            }
+        }
+    }
+
+    // La matriz de normales se lee como la escribio el backend. Con una luz
+    // direccional el color depende de la normal que calcula el shader, asi
+    // que esta comprobacion distingue la matriz bien escrita de la que llega
+    // con las columnas corridas.
+    {
+        backend.beginFrame();
+        backend.setViewport(0, 0, kAncho, kAlto);
+        backend.applyBaseState();
+        backend.bindRenderTarget(objetivo);
+        backend.clearScreen(negro);
+
+        // Rotacion sobre el eje Z: la normal del triangulo (0, 0, 1) no
+        // cambia, asi que el shader tiene que ver la misma normal que con la
+        // matriz identidad.
+        const glm::mat3 rotacionZ(0.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f,
+                                   0.0f, 0.0f, 1.0f);
+        if (locationNormal >= 0)
+            backend.setUniformMat3(locationNormal, rotacionZ);
+
+        // Sin ambiente: el color sale solo de la luz, y la luz solo ilumina si
+        // la normal es la que dice la matriz.
+        if (locationAmbiente >= 0)
+            backend.setUniformVec3(locationAmbiente, glm::vec3(0.0f));
+        const float ambienteNegro[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        if (locationMaterialAmbiente >= 0)
+            backend.setUniformVec4(locationMaterialAmbiente, ambienteNegro);
+
+        // Luz direccional que apunta hacia +Z, que es la normal del
+        // triangulo: el difuso tiene que ser pleno.
+        const int locationTipoLuz = backend.uniformLocation(
+            programa, nombreDeElemento(Contrato::Uniforme::kLightTypes, 0).c_str());
+        const int locationPosLuz = backend.uniformLocation(
+            programa,
+            nombreDeElemento(Contrato::Uniforme::kLightWorldPos, 0).c_str());
+        const int locationAmbienteLuz = backend.uniformLocation(
+            programa,
+            nombreDeElemento(Contrato::Uniforme::kLightAmbient, 0).c_str());
+        const int locationDifusoLuz = backend.uniformLocation(
+            programa,
+            nombreDeElemento(Contrato::Uniforme::kLightDiffuse, 0).c_str());
+        CHECK(locationTipoLuz >= 0 && locationPosLuz >= 0 &&
+                  locationAmbienteLuz >= 0 && locationDifusoLuz >= 0,
+              "el programa de malla expone los uniformes de la luz");
+        if (locationTipoLuz >= 0) backend.setUniformInt(locationTipoLuz, 0);
+        if (locationPosLuz >= 0)
+            backend.setUniformVec3(locationPosLuz, glm::vec3(0.0f, 0.0f, -1.0f));
+        if (locationAmbienteLuz >= 0)
+            backend.setUniformVec3(locationAmbienteLuz, glm::vec3(0.0f));
+        if (locationDifusoLuz >= 0)
+            backend.setUniformVec3(locationDifusoLuz, glm::vec3(1.0f));
+        if (locationLuces >= 0) backend.setUniformInt(locationLuces, 1);
+
+        backend.drawMesh(malla, 3);
+        backend.endFrame();
+
+        std::vector<unsigned char> pixelesLuz;
+        const bool leidoLuz = backend.leerPixeles(objetivo, pixelesLuz);
+        CHECK(leidoLuz, "se leen los pixeles del render target con luz");
+
+        if (leidoLuz && pixelesLuz.size() == esperadoTamano) {
+            // La normal es (0, 0, 1) y la luz apunta a (0, 0, 1): el difuso
+            // es 1 y el pixel queda blanco.
+            const int esperadoConLuz[3] = {255, 255, 255};
+            for (int y = 0; y < kAlto; y += 8) {
+                for (int x = 0; x < kAncho; x += 8) {
+                    const unsigned char* pixel =
+                        &pixelesLuz[(static_cast<std::size_t>(y) * kAncho + x) *
+                                    4];
+                    for (int canal = 0; canal < 3; ++canal) {
+                        CHECK(std::abs(static_cast<int>(pixel[canal]) -
+                                       esperadoConLuz[canal]) <= 2,
+                              "la luz ilumina con la normal que dice la matriz");
+                    }
                 }
             }
         }

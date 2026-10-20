@@ -1074,9 +1074,17 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
 - `barra-progreso-tests` (8): `BarraProgresoTexto` (formato de la barra de la
   ventana Estado, acotado ante `hecha > total` y `total == 0`).
 - `uniformes-vulkan-tests` (9): escritura de matrices en el bloque de uniformes
-  del backend de Vulkan (un UBO en std140: 64 bytes por `mat4`, 48 por `mat3`
-  con 12 de padding a cero). Comprueba con un canario que la escritura no pasa
-  del bloque y que una matriz que no entra se rechaza sin modificarlo.
+  del backend de Vulkan (un UBO en std140: 64 bytes por `mat4`, 48 por `mat3`,
+  que son tres columnas de 16 bytes con el relleno entre columnas). Comprueba
+  que cada columna de la `mat3` quede en su lugar, que el relleno quede a
+  cero, con un canario que la escritura no pase del bloque y que una matriz
+  que no entra se rechace sin modificarlo.
+- `vulkan-backend-tests` (406): el backend de Vulkan sobre un render target
+  fuera de pantalla, sin ventana: dibuja una malla y lee los píxeles. Comprueba
+  el color del material con el ambiente global, y que una luz direccional
+  ilumine con la normal que dice la matriz de normales (la `mat3` del bloque
+  llega al shader con las columnas en el layout de std140). *Skipped* (77) si
+  la máquina no tiene un dispositivo Vulkan utilizable.
 - `tema-tests` (28): `TemaEditor` (aplicación del perfil `Apariencia`): el acento
   llega a todos los roles de ImGui y el modo B/N deja la paleta monocroma.
 - `comandos-tests` (77): undo/redo del editor (7 comandos, cadena de redo
