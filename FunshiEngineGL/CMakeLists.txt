@@ -460,6 +460,26 @@ if(FUNSHI_VULKAN)
                 ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerarShadersSPIRV.cmake
         COMMENT "Generando el SPIR-V embebido de los shaders")
     target_sources(funshi_engine PRIVATE ${ARCHIVO_SPIRV_GENERADO})
+
+    # --- Pruebas headless del backend de Vulkan ------------------------------
+    #
+    # El backend se comprueba sin ventana: se dibuja sobre un render target
+    # fuera de pantalla y se leen los pixeles de la imagen. Si la maquina no
+    # tiene Vulkan el test sale con 77 (skipped) y la suite sigue verde.
+    add_executable(vulkan-backend-tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/VulkanBackendTests.cpp
+    )
+    target_include_directories(vulkan-backend-tests PRIVATE
+        ${SRC_DIR}
+        ${CMAKE_SOURCE_DIR}/External
+    )
+    target_link_libraries(vulkan-backend-tests PRIVATE funshi_engine Vulkan::Vulkan)
+    set_target_properties(vulkan-backend-tests PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    add_test(NAME vulkan-backend-tests COMMAND vulkan-backend-tests)
 endif()
 
 # Bullet Physics
