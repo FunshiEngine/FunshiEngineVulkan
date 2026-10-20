@@ -18,6 +18,7 @@
 */
 #include "BackendVulkan.h"
 
+#include "BackendVulkanUniformes.h"
 #include "BackendVulkanUtil.h"
 #include "ShadersSPIRV.h"
 
@@ -542,18 +543,23 @@ void BackendVulkan::convertirMatriz(Contrato::ShaderKind kind, const char* nombr
 void BackendVulkan::setUniformMat4(int location, const glm::mat4& value) {
     if (!programaEnUso_ || location < 0) return;
     ProgramaVulkan& p = *programaEnUso_;
-    if (location + 64 > static_cast<int>(p.valores.size())) return;
-    float* destino = reinterpret_cast<float*>(p.valores.data() + location);
-    std::memcpy(destino, glm::value_ptr(value), 64 * sizeof(float));
-    convertirMatriz(p.kind, nombreDeOffset(p, location), destino);
+    // La escritura la hace escribirMatriz4: el limite se comprueba contra el
+    // tamano real del bloque y en bytes, que es como esta el UBO.
+    if (!escribirMatriz4(reinterpret_cast<unsigned char*>(p.valores.data()),
+                         p.valores.size(), static_cast<std::size_t>(location),
+                         glm::value_ptr(value)))
+        return;
+    convertirMatriz(p.kind, nombreDeOffset(p, location),
+                    reinterpret_cast<float*>(p.valores.data() + location));
 }
 
 void BackendVulkan::setUniformMat3(int location, const glm::mat3& value) {
     if (!programaEnUso_ || location < 0) return;
     ProgramaVulkan& p = *programaEnUso_;
-    if (location + 48 > static_cast<int>(p.valores.size())) return;
-    float* destino = reinterpret_cast<float*>(p.valores.data() + location);
-    std::memcpy(destino, glm::value_ptr(value), 48 * sizeof(float));
+    if (!escribirMatriz3(reinterpret_cast<unsigned char*>(p.valores.data()),
+                         p.valores.size(), static_cast<std::size_t>(location),
+                         glm::value_ptr(value)))
+        return;
 }
 
 void BackendVulkan::setUniformVec3(int location, const glm::vec3& value) {

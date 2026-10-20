@@ -929,8 +929,27 @@ set_target_properties(barra-progreso-tests PROPERTIES
 )
 add_test(NAME barra-progreso-tests COMMAND barra-progreso-tests)
 
+# --- Pruebas headless de la escritura de matrices en el bloque de uniformes --
+# El bloque de uniformes es un UBO en std140 (64 bytes por mat4, 48 por mat3).
+# Escribir de mas ahi pisa la memoria del proceso, y el fallo aparece mucho
+# despues y en otro sitio, asi que la prueba mide el efecto exacto: escribe
+# la matriz en un bloque con un canario detras y comprueba que el canario
+# quedo intacto. No necesita GPU ni glm, asi que corre tambien en el build
+# headless.
+add_executable(uniformes-vulkan-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/UniformesVulkanTests.cpp
+)
+target_include_directories(uniformes-vulkan-tests PRIVATE ${SRC_DIR})
+set_target_properties(uniformes-vulkan-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME uniformes-vulkan-tests COMMAND uniformes-vulkan-tests)
+
 if(WIN32)
     target_compile_definitions(barra-progreso-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(uniformes-vulkan-tests PRIVATE _HAS_STD_BYTE=0)
 endif()
 
 add_executable(terminal-emulator-tests
