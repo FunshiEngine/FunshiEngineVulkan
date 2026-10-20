@@ -123,6 +123,8 @@ FunshiEngineGL/                          ← raíz del repo
 │   │                                      backend de mentira, sin GPU)
 │   ├── VulkanBackendTests.cpp           ← headless del backend de Vulkan (dibuja sobre un render
 │   │                                      target y lee los píxeles; *skipped* si no hay GPU)
+│   ├── UniformesVulkanTests.cpp         ← headless de la escritura de matrices en el bloque de
+│   │                                      uniforms (canario: la escritura no pasa del bloque)
 │   └── UserInterfaceTests.cpp           ← modelo del Creador de interfaces (round-trip JSON)
 └── FunshiEngineGL/                      ← proyecto CMake principal
     ├── CMakeLists.txt                   ← GLOB de fuentes, dependencias, sanitizers,
@@ -353,6 +355,8 @@ FunshiEngineGL/                          ← raíz del repo
         │   │   │                              descriptores, anillo de uniforms y conversión de
         │   │   │                              la convención de las matrices
         │   │   ├── BackendVulkanDibujo.cpp ← apertura y cierre de pasadas y dibujados
+        │   │   ├── BackendVulkanUniformes.h ← escritura de matrices en el bloque de uniforms
+        │   │   │                              (límite en bytes contra el tamaño del bloque)
         │   │   ├── LayoutUniformes.h/.cpp  ← layout std140 del bloque de uniforms, derivado del
         │   │   │                              contrato (offset de cada uniform)
         │   │   ├── ShadersSPIRV.h          ← declaración del SPIR-V embebido de los shaders
@@ -943,7 +947,7 @@ La convención general es un par `.h`/`.cpp` por clase. Las excepciones son:
 al build sin enumerarlos manualmente. Los archivos de ImGui se recopilan por separado
 desde `src/ImGui/` y los de ImGuizmo desde `ImGuizmo/` (fuera de `src/`).
 
-Además del ejecutable, el proyecto define **veintinueve targets de prueba
+Además del ejecutable, el proyecto define **treinta targets de prueba
 headless** registrados en CTest (`scripts-java-tests` solo se registra con
 `-DFUNSHI_JAVA=ON`; once de ellos viven bajo `BUILD_ENGINE=ON`
 —`comandos-tests`, `escena-serializacion-tests`, `catalogo-componentes-tests`,
@@ -1063,6 +1067,10 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
   resto del objeto.
 - `barra-progreso-tests` (8): `BarraProgresoTexto` (formato de la barra de la
   ventana Estado, acotado ante `hecha > total` y `total == 0`).
+- `uniformes-vulkan-tests` (9): escritura de matrices en el bloque de uniformes
+  del backend de Vulkan (un UBO en std140: 64 bytes por `mat4`, 48 por `mat3`
+  con 12 de padding a cero). Comprueba con un canario que la escritura no pasa
+  del bloque y que una matriz que no entra se rechaza sin modificarlo.
 - `tema-tests` (28): `TemaEditor` (aplicación del perfil `Apariencia`): el acento
   llega a todos los roles de ImGui y el modo B/N deja la paleta monocroma.
 - `comandos-tests` (77): undo/redo del editor (7 comandos, cadena de redo
@@ -1122,8 +1130,8 @@ Las **diez** suites que dependen del engine (`comandos-tests`,
 `funshi_engine`; `interface-component-tests` compila sus fuentes sueltas, pero el
 `InterfaceComponent` usa glm: también solo se registra con `BUILD_ENGINE=ON`. El
 resto compila sus fuentes directamente (`barra-progreso-tests` entre ellas) y
-corre también con `BUILD_ENGINE=OFF`: con el motor hay 29 suites registradas y
-sin él 17.
+corre también con `BUILD_ENGINE=OFF`: con el motor hay 30 suites registradas y
+sin él 18.
 
 La opción `BUILD_ENGINE=OFF` compila solo las pruebas (útil en CI y plataformas
 sin las librerías gráficas), y `ENABLE_ASAN` (ON por defecto en Debug) activa
