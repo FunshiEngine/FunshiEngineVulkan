@@ -1,7 +1,11 @@
 # Genera un .cpp con el SPIR-V de los shaders embebido.
 #
 # Se invoca desde el CMakeLists con:
-#   cmake -DENTRADA="a.spv;b.spv" -DSALIDA="destino.cpp" -P GenerarShadersSPIRV.cmake
+#   cmake -DENTRADA=lista.txt -DSALIDA="destino.cpp" -P GenerarShadersSPIRV.cmake
+#
+# ENTRADA es un archivo con un path de SPIR-V por linea. La lista no puede ir
+# en el -D: separada por ";" se parte en varias al pasar por el shell (en sh el
+# ";" es separador de comandos) y el script deja de recibir los shaders.
 #
 # Los archivos de entrada son binarios SPIR-V (salida de glslc o
 # glslangValidator). El resultado es un .cpp con un array de uint32_t por
@@ -11,6 +15,12 @@
 if(NOT DEFINED ENTRADA OR NOT DEFINED SALIDA)
     message(FATAL_ERROR "GenerarShadersSPIRV: faltan ENTRADA o SALIDA")
 endif()
+
+if(NOT EXISTS "${ENTRADA}")
+    message(FATAL_ERROR "GenerarShadersSPIRV: no existe la lista ${ENTRADA}")
+endif()
+
+file(STRINGS "${ENTRADA}" ARCHIVOS_SPIRV)
 
 # Cada palabra del binario es un uint32 en orden little-endian: los bytes se
 # invierten al pasarlos a hexadecimal.
@@ -41,7 +51,7 @@ string(APPEND CONTENIDO "// src/Rendering/BackendVulkan/Shaders, compilados a SP
 string(APPEND CONTENIDO "#include \"Rendering/BackendVulkan/ShadersSPIRV.h\"\n\n")
 string(APPEND CONTENIDO "namespace Rendering {\nnamespace Backend {\nnamespace Vulkan {\nnamespace Shaders {\n\n")
 
-foreach(archivo ${ENTRADA})
+foreach(archivo ${ARCHIVOS_SPIRV})
     # "Malla.vert.spv" -> tipo "Malla", etapa "vert", simbolo "kMallaVert".
     # El nombre se parte a mano porque el nombre del archivo tiene dos puntos y
     # get_filename_component no los separa como hace falta.

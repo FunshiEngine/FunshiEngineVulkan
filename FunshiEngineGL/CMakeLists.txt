@@ -453,13 +453,20 @@ if(FUNSHI_VULKAN)
 
     set(ARCHIVO_SPIRV_GENERADO
         ${CMAKE_CURRENT_BINARY_DIR}/ShadersSPIRV.generado.cpp)
+    # La lista de archivos se pasa por archivo y no en el -D: una lista de CMake
+    # separada por ";" se parte en varias al pasar por el shell (en sh el ";"
+    # es separador de comandos) y el script deja de recibir los shaders.
+    set(ARCHIVO_LISTA_SPIRV ${CMAKE_CURRENT_BINARY_DIR}/shaders.lista.txt)
+    string(REPLACE ";" "\n" LISTA_SPIRV "${ARCHIVOS_SPIRV}")
+    file(WRITE ${ARCHIVO_LISTA_SPIRV} "${LISTA_SPIRV}\n")
     add_custom_command(
         OUTPUT ${ARCHIVO_SPIRV_GENERADO}
         COMMAND ${CMAKE_COMMAND}
-                "-DENTRADA=${ARCHIVOS_SPIRV}"
+                "-DENTRADA=${ARCHIVO_LISTA_SPIRV}"
                 "-DSALIDA=${ARCHIVO_SPIRV_GENERADO}"
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerarShadersSPIRV.cmake
         DEPENDS ${ARCHIVOS_SPIRV}
+                ${ARCHIVO_LISTA_SPIRV}
                 ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerarShadersSPIRV.cmake
         COMMENT "Generando el SPIR-V embebido de los shaders")
     target_sources(funshi_engine PRIVATE ${ARCHIVO_SPIRV_GENERADO})
