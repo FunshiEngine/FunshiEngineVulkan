@@ -43,6 +43,7 @@
 #include "../FunshiEngineGL/src/Configuracion/ProyectoInicial.h"
 #include "../FunshiEngineGL/src/Configuracion/Apariencia.h"
 #include "../FunshiEngineGL/src/Configuracion/RutasLog.h"
+#include "../FunshiEngineGL/src/Configuracion/NombreProducto.h"
 
 namespace fs = std::filesystem;
 
@@ -1023,8 +1024,10 @@ CHECK(cfgBajo.datos().apariencia.radioDifuminado ==
     //    la temporal del sistema es el ultimo recurso. Sin esto, instalado en
     //    Program Files el motor se queda sin log ni consola que lo muestre.
     {
-        const std::string exe = "/opt/FunshiEngineGL";
-        const std::string datosUsuario = "/home/usuario/.local/share/FunshiEngineGL/MotorGrafico";
+        const std::string exe = std::string("/opt/") + NombreProducto::kNombre;
+        const std::string datosUsuario =
+            std::string("/home/usuario/.local/share/") + NombreProducto::kNombre +
+            "/MotorGrafico";
         const std::string temp = "/tmp";
 
         const std::vector<std::string> rutas = RutasLog::candidatas(
@@ -1033,7 +1036,7 @@ CHECK(cfgBajo.datos().apariencia.radioDifuminado ==
         CHECK(rutas[0] == (fs::path(datosUsuario) / "logs").string(),
               "la primera candidata es la raiz de datos");
         CHECK(rutas[1] == (fs::path(exe) / "logs").string(), "la segunda, la carpeta del ejecutable");
-        CHECK(rutas[2] == (fs::path(temp) / "FunshiEngineGL" / "logs").string(),
+        CHECK(rutas[2] == (fs::path(temp) / NombreProducto::kNombre / "logs").string(),
               "la tercera, la temporal del motor");
 
         // Sin raiz de datos no se pierde la carpeta del ejecutable.
@@ -1050,7 +1053,7 @@ CHECK(cfgBajo.datos().apariencia.radioDifuminado ==
         const std::vector<std::string> repetidas =
             RutasLog::candidatas(exe, exe, temp);
         CHECK(repetidas.size() == 2 && repetidas[0] == (fs::path(exe) / "logs").string() &&
-                  repetidas[1] == (fs::path(temp) / "FunshiEngineGL" / "logs").string(),
+                  repetidas[1] == (fs::path(temp) / NombreProducto::kNombre / "logs").string(),
               "una ruta repetida no se prueba dos veces");
     }
 

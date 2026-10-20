@@ -86,7 +86,7 @@ resolvio `Imagenes/`.
 ## 2. Logs
 
 - Carpeta: `logs/` **junto al ejecutable** (se crea sola).
-- Archivo: `FunshiEngineGL_AAAAMMDD_HHMMSS.log` (uno por arranque, con
+- Archivo: `FunshiEngineVK_AAAAMMDD_HHMMSS.log` (uno por arranque, con
   timestamp UTC), en modo append si ya existia.
 - Contiene el diagnostico de GPU, los mensajes `[diag]` del render y cualquier
   error (`[MeshRenderer]`, `[IconosGUI]`, etc.).

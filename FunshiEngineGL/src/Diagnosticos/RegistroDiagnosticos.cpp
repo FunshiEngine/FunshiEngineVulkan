@@ -16,6 +16,7 @@
 
     SPDX-License-Identifier: Apache-2.0
 */
+#include "../Configuracion/NombreProducto.h"
 #include "../Configuracion/ProjectPaths.h"
 #include "RegistroDiagnosticos.h"
 #include "../ExcepcionesCPP/RuntimeException.h"
@@ -152,7 +153,7 @@ RegistroDiagnosticos& RegistroDiagnosticos::global() {
 
 std::filesystem::path RegistroDiagnosticos::archivoPorDefecto() {
     return std::filesystem::path(ProjectPaths::directorioBase()) / "logs" /
-           "FunshiEngineGL_diagnosticos.jsonl";
+           (std::string(NombreProducto::kNombre) + "_diagnosticos.jsonl");
 }
 
 std::vector<EventoDiagnostico> RegistroDiagnosticos::leerArchivo(

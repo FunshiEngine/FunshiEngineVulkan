@@ -32,6 +32,7 @@
 #include <iostream>
 #include <vector>
 
+#include "Configuracion/NombreProducto.h"
 #include "Rendering/Backend/IRenderBackend.h"
 #include "Herramientas/IconosGUI/stb_image.h"
 
@@ -146,7 +147,8 @@ int Ventana::initVentana() {
     // y en una API sin swapchain no existe.
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    window = glfwCreateWindow(width, height, "FunshiEngineGL", nullptr, nullptr);
+    window = glfwCreateWindow(width, height, NombreProducto::kNombre, nullptr,
+                              nullptr);
     if (!window) {
         std::cerr << "[Ventana] No se pudo crear la ventana del motor."
                   << std::endl;

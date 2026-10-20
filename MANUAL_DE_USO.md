@@ -5,7 +5,7 @@
     SPDX-License-Identifier: Apache-2.0
 -->
 
-# Manual de uso de FunshiEngineGL
+# Manual de uso de FunshiEngineVK
 
 Guia practica para usuarios del editor: como montar una escena, asignar assets
 por arrastre y escribir scripts con la API exacta que expone el motor.
@@ -93,25 +93,25 @@ Al crear un proyecto, el motor genera la estructura bajo
 > administrador). Si el motor está en una carpeta donde no puede escribir —una
 > copia en `Program Files`, una carpeta montada en solo lectura, el motor
 > lanzado como administrador—, usa en su lugar
-> `%APPDATA%\FunshiEngineGL\MotorGrafico` (Windows) o
-> `$XDG_DATA_HOME/FunshiEngineGL/MotorGrafico`, con respaldo en
-> `~/.local/share/FunshiEngineGL/MotorGrafico` (Linux y macOS). La ruta
+> `%APPDATA%\FunshiEngineVK\MotorGrafico` (Windows) o
+> `$XDG_DATA_HOME/FunshiEngineVK/MotorGrafico`, con respaldo en
+> `~/.local/share/FunshiEngineVK/MotorGrafico` (Linux y macOS). La ruta
 > efectiva se imprime por consola al arrancar y la migración de la carpeta
 > anterior, si había algo, se avisa en la barra de estado. Los proyectos que
 > migran siguen funcionando: las rutas de assets se guardan relativas al
 > proyecto, no absolutas.
 >
-> El log de arranque (`logs/FunshiEngineGL_<AAAAMMDD_HHMMSS>.log`, ver el árbol)
+> El log de arranque (`logs/FunshiEngineVK_<AAAAMMDD_HHMMSS>.log`, ver el árbol)
 > vive también en esa carpeta de datos, de modo que se escribe aunque el motor
 > esté en una carpeta de la que no se pueda escribir. Si esa carpeta tampoco
 > admite escritura, el motor cae a la carpeta temporal del sistema
-> (`%TEMP%\FunshiEngineGL\logs` o `/tmp/FunshiEngineGL/logs`), y solo si las tres
+> (`%TEMP%\FunshiEngineVK\logs` o `/tmp/FunshiEngineVK/logs`), y solo si las tres
 > opciones fallan se queda sin archivo de log y escribe en la consola.
 
 ```
 MotorGrafico/
 ├── logs/
-│   └── FunshiEngineGL_<AAAAMMDD_HHMMSS>.log   ← log de arranque (UTC), uno por ejecucion
+│   └── FunshiEngineVK_<AAAAMMDD_HHMMSS>.log   ← log de arranque (UTC), uno por ejecucion
 ├── Proyects/
 │   └── <proyecto>/
 │       ├── Memory/
@@ -869,7 +869,7 @@ ejecuta durante Depuración y Juego.
 - La ventana **Estado** muestra el toolchain (compilador C++, javac, libjvm,
   cache) y el resultado de compilacion/carga de cada script de la escena.
 - Los errores de carga/compilacion se informan en la ventana **Estado** y en el
-  log del motor (`logs/FunshiEngineGL_*.log` en la carpeta de datos, seccion 2);
+  log del motor (`logs/FunshiEngineVK_*.log` en la carpeta de datos, seccion 2);
   el panel del componente no los repite: queda con el fuente asignado y sus
   SerializeField.
 

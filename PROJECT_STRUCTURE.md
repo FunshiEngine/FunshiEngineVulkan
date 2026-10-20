@@ -2,7 +2,7 @@
 
 ## 1. Descripción general
 
-`FunshiEngineGL` es un editor/motor gráfico 3D en C++17. El ejecutable combina:
+`FunshiEngineVK` es un editor/motor gráfico 3D en C++17. El ejecutable combina:
 
 - Ventana y eventos mediante GLFW, sin contexto gráfico: la superficie la crea
   el backend de render que se instale.
@@ -1219,8 +1219,8 @@ calcularla:
    `C:\Program Files` la carpeta es legible y aun así el proceso no puede crear
    nada dentro (la creó el instalador con los ACL de `Program Files`; el
    ejecutable no lleva manifiesto de elevación).
-3. Si no puede, cae a la carpeta de datos del usuario: `%APPDATA%\FunshiEngineGL`
-   en Windows, `$XDG_DATA_HOME/FunshiEngineGL` o `~/.local/share/FunshiEngineGL`
+3. Si no puede, cae a la carpeta de datos del usuario: `%APPDATA%\FunshiEngineVK`
+   en Windows, `$XDG_DATA_HOME/FunshiEngineVK` o `~/.local/share/FunshiEngineVK`
    en Linux y macOS. El instalador de Windows es por usuario
    (`PrivilegesRequired=lowest`), así que en una instalación normal este punto
    2 se cumple y la carpeta queda en `%LOCALAPPDATA%\Programs\FunshiEngineGL`:

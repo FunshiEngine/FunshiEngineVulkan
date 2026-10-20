@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include "NombreProducto.h"
+
 // Carpetas candidatas donde escribir el log de arranque, en orden de
 // preferencia. La primera suele ser la raiz de datos del motor, que ya cae a la
 // carpeta de usuario cuando el ejecutable no admite escritura (instalado en
@@ -45,7 +47,7 @@ inline std::vector<std::string> candidatas(const std::string& raizDatos,
     if (!raizDatos.empty()) agregar(std::filesystem::path(raizDatos));
     if (!dirEjecutable.empty()) agregar(std::filesystem::path(dirEjecutable));
     if (!dirTemp.empty())
-        agregar(std::filesystem::path(dirTemp) / "FunshiEngineGL");
+        agregar(std::filesystem::path(dirTemp) / NombreProducto::kNombre);
     return rutas;
 }
 

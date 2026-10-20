@@ -1,6 +1,6 @@
 # Logs
 
-La app escribe aqui un archivo `FunshiEngineGL_AAAAMMDD_HHMMSS.log` por
+La app escribe aqui un archivo `FunshiEngineVK_AAAAMMDD_HHMMSS.log` por
 arranque (header de inicio + diagnostico GPU + mensajes `[diag]` del render +
 errores). El nombre lleva timestamp UTC.
 
