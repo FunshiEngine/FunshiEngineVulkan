@@ -242,6 +242,10 @@ defecto es `BackendNulo`, que cumple el contrato entero sin dibujar nada. Un
 backend real se instala con `Rendering::Backend::instalarBackend()` antes de
 arrancar el bucle.
 
+**Este repositorio es donde vive la implementación de Vulkan** de ese contrato.
+El motor y el contrato vienen del core (`FunshiEngineCore`); lo que se
+implementa acá es el backend.
+
 | Pieza | Archivo | Qué aporta |
 |---|---|---|
 | Contrato de render | `src/Rendering/ContratoRender.h` | Tipos de programa (`ShaderKind`), nombres y tipos de los uniformes por tipo de programa, layout de vértices, máximo de luces, estructuras de vértice. |
@@ -249,6 +253,7 @@ arrancar el bucle.
 | Backend nulo | `src/Rendering/Backend/BackendNulo.{h,cpp}` | La implementación en blanco: `init()` correcto, `available()` falso, recursos inválidos. |
 | Backend activo | `src/Rendering/Backend/BackendActivo.cpp` | La instancia activa: `activeBackend()` y `instalarBackend()`. |
 | Fachada de la interfaz | `src/ImGui/BackendImGui.h` + `BackendImGuiNulo.cpp` | `MotorImGui::{init,shutdown,newFrame,render,hayRenderer,nombreRenderer}`; en el core la implementación es nula. |
+| Backend de Vulkan | `src/Rendering/BackendVulkan/` | La implementación real del contrato sobre Vulkan: loader, instancia, dispositivo, swapchain, pipelines, recursos y pasadas. |
 
 Reglas que se sostienen en este repositorio:
 
@@ -276,14 +281,33 @@ Reglas que se sostienen en este repositorio:
   lint* de los renderers: falla si alguno escribe un uniforme con un literal o
   si usa un uniforme que su tipo de programa no expone.
 
+Reglas propias de la implementación de Vulkan:
+
+- **El contrato no se modifica desde acá.** Si Vulkan necesita algo que el
+  contrato no expresa (un límite de frame, la ventana nativa), el cambio se
+  hace en el core (`FunshiEngineCore`) y se trae con un merge. La razón: el
+  contrato es lo que comparten todos los backends; cambiarlo acá dejaria al
+  core fuera de sync con su propia interfaz.
+- **El backend no toca el motor.** Todo lo que el motor necesita se resuelve
+  por el contrato (`IRenderBackend`) o por la fachada de la interfaz
+  (`MotorImGui`). Un `if (vulkan)` en el motor es un error de diseño.
+- **El loader de Vulkan se carga en tiempo de ejecución** (el mismo criterio que
+  usaba `GLFuncs.h` con las funciones de GL): el motor tiene que arrancar en una
+  máquina sin Vulkan.
+- **El SPIR-V se compila en build time y va embebido en el ejecutable**: el
+  runtime no depende de un compilador de shaders ni de leer archivos.
+- **Los tests que necesitan GPU se marcan como *skipped* (77)** cuando la
+  máquina no tiene Vulkan, para que la suite siga siendo verde en un runner sin
+  GPU.
+
 ## Plan de trabajo en curso
 
 El plan vive en `.agentes/` (ignorado por git) y se actualiza en cada paso.
 
 | Plan | Repositorio | Objetivo | Estado |
 |---|---|---|---|
-| `PLAN CORE SIN API GRAFICA.md` | este | Dejar el core sin API gráfica implementada: contrato de render, backend nulo, ventana sin contexto y fachadas de interfaz. | Cerrado |
-| `PLAN IMPLEMENTACION VULKAN.md` | `FunshiEngineVulkan` | Implementar el backend Vulkan sobre el contrato e integrarlo con los renderers y la interfaz. | En curso |
+| `PLAN CORE SIN API GRAFICA.md` | `FunshiEngineCore` | Dejar el core sin API gráfica implementada: contrato de render, backend nulo, ventana sin contexto y fachadas de interfaz. | Cerrado |
+| `PLAN IMPLEMENTACION VULKAN.md` | este | Implementar el backend Vulkan sobre el contrato e integrarlo con los renderers y la interfaz. | En curso |
 
 ## Memoria de trabajo: documentos locales ignorados por git
 
