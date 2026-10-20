@@ -597,15 +597,21 @@ if(USE_ASSIMP)
     target_link_libraries(funshi_engine PRIVATE assimp::assimp)
 endif()
 
-# GLM: se usa el directorio embebido si existe en el repo; si no (p. ej. en CI
-# sin External/), se busca la copia del sistema (libglm-dev en Ubuntu).
+# GLM (solo headers): se usa el directorio embebido si existe en el repo; si no
+# (p. ej. en CI sin External/), se busca la copia del sistema (libglm-dev en
+# Ubuntu, vcpkg en Windows). Se expone como target INTERFACE para que lo usen
+# tanto el motor como las pruebas que compilan sueltas (que no enlazan
+# funshi_engine): en Windows el include de vcpkg no esta en el path por
+# defecto y sin esto esas pruebas no compilan.
 set(GLM_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/glm")
+add_library(funshi_glm INTERFACE)
 if(EXISTS "${GLM_INCLUDE_DIR}/glm/glm.hpp")
-    target_include_directories(funshi_engine PUBLIC ${GLM_INCLUDE_DIR})
+    target_include_directories(funshi_glm INTERFACE ${GLM_INCLUDE_DIR})
 else()
     find_package(glm REQUIRED)
-    target_link_libraries(funshi_engine PRIVATE glm::glm)
+    target_link_libraries(funshi_glm INTERFACE glm::glm)
 endif()
+target_link_libraries(funshi_engine PUBLIC funshi_glm)
 
 if(NOT BUILD_RUNTIME)
 # Comandos (sistema undo/redo): se enlaza con funshi_engine que provee todas las
@@ -839,6 +845,32 @@ set_target_properties(tema-tests PROPERTIES
 )
 add_test(NAME tema-tests COMMAND tema-tests)
 
+# --- Pruebas del InterfaceComponent (serializacion binaria) ------------------
+# El componente guarda la ruta del .html de la interfaz mas su colocacion; el
+# formato nuevo lleva una marca para distinguirse del payload viejo (solo el
+# nombre). La prueba cubre el round-trip y que el lector del formato viejo no
+# consuma bytes de mas (lo que desalinearia los componentes siguientes).
+# Compila InterfaceComponent.cpp suelto (sin funshi_engine), pero el componente
+# usa glm (headers de matematicas), que no esta disponible en un build sin
+# dependencias externas: por eso vive en el bloque del motor y no en el de las
+# pruebas headless.
+add_executable(interface-component-tests
+    ${SRC_DIR}/Objetos/Componentes/InterfaceComponent.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/InterfaceComponentTests.cpp
+)
+target_link_libraries(interface-component-tests PRIVATE
+    funshi_diagnostics_core funshi_glm)
+target_include_directories(interface-component-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+)
+set_target_properties(interface-component-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME interface-component-tests COMMAND interface-component-tests)
+
 if(WIN32)
     target_link_libraries(manifiesto-assets-tests PRIVATE dbghelp)
     target_link_libraries(orquestador-estado-tests PRIVATE dbghelp)
@@ -846,6 +878,7 @@ if(WIN32)
     target_compile_definitions(manifiesto-assets-tests PRIVATE _HAS_STD_BYTE=0)
     target_compile_definitions(orquestador-estado-tests PRIVATE _HAS_STD_BYTE=0)
     target_compile_definitions(tema-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(interface-component-tests PRIVATE _HAS_STD_BYTE=0)
 endif()
 
 endif() # NOT BUILD_RUNTIME (sin pruebas del bloque editor)
@@ -888,33 +921,6 @@ add_test(NAME barra-progreso-tests COMMAND barra-progreso-tests)
 
 if(WIN32)
     target_compile_definitions(barra-progreso-tests PRIVATE _HAS_STD_BYTE=0)
-endif()
-
-# --- Pruebas headless del InterfaceComponent (serializacion binaria) ---
-# El componente guarda la ruta del .html de la interfaz mas su colocacion; el
-# formato nuevo lleva una marca para distinguirse del payload viejo (solo el
-# nombre). La prueba cubre el round-trip y que el lector del formato viejo no
-# consuma bytes de mas (lo que desalinearia los componentes siguientes). Compila
-# InterfaceComponent.cpp suelto (solo std + glm, sin funshi_engine) para correr
-# tambien en el job headless con BUILD_ENGINE=OFF.
-add_executable(interface-component-tests
-    ${SRC_DIR}/Objetos/Componentes/InterfaceComponent.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/InterfaceComponentTests.cpp
-)
-target_link_libraries(interface-component-tests PRIVATE funshi_diagnostics_core)
-target_include_directories(interface-component-tests PRIVATE
-    ${SRC_DIR}
-    ${CMAKE_SOURCE_DIR}/External
-)
-set_target_properties(interface-component-tests PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-)
-add_test(NAME interface-component-tests COMMAND interface-component-tests)
-
-if(WIN32)
-    target_compile_definitions(interface-component-tests PRIVATE _HAS_STD_BYTE=0)
 endif()
 
 add_executable(terminal-emulator-tests
