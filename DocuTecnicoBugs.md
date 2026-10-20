@@ -110,6 +110,7 @@ recorrer(destFolder); // Ahora SÍ re-lee porque cache inválido
 | **R15 — El separador nativo manda al comparar rutas** | Quien arma una ruta con `std::filesystem` (o con `PATH_SEP`) produce el separador de su plataforma: en Windows, `base / "logs"` es `\logs`, no `/logs`. Un test que compare contra un literal con `/` solo pasa en Linux; comparar contra `(fs::path(base) / ...).string()` o rehacer el cálculo con la misma herramienta que el código bajo prueba | `tests/EditorConfigTests.cpp` (bloque `RutasLog::candidatas` y `relativizarRuta`) |
 | **R16 — La resolución del `mtime` depende del toolchain, no del FS** | NTFS registra el mtime con 100ns, pero la lectura de `std::filesystem::last_write_time` en el CRT de MinGW viene de `stat` (1 segundo) y su setter no aplica sobre directorios: una creación dentro del mismo segundo que la marca guardada no es observable ahi, mientras que con MSVC (FILETIME) si lo es. Quien compare mtimes para decidir (polling, invalidación de cache, hot reload) no debe depender de subsegundos, y un test que ejercite esa comparación debe hacer el cambio visible en ambas granularidades o constatar la limitación | `FileSystemWatcher` (fallback de polling), `tests/FileManagerTests.cpp` (bloque polling) |
 | **R17 — Tu binario también es el subproceso** | Un motor multiproceso (CEF) relanza el **mismo ejecutable** con `--type=...`: `CefExecuteProcess` debe correr al comienzo de `main`, antes de log/ventana/GL; devuelve -1 cuando el proceso no es subproceso y el motor sigue. Si no se corta ahí, el subproceso arranca la inicialización completa del motor en paralelo al proceso principal | `WebUIRuntime::ejecutarSubproceso` en `main.cpp` y `main_juego.cpp` (ver §13.4) |
+| **R19 — La matriz se escribe en el layout del bloque** | Los datos de una matriz en memoria van seguidos, pero en un bloque `std140` cada columna de una `mat3` ocupa 16 bytes: la escritura reparte las columnas a paso de 16 y deja el relleno a cero, contra el tamaño real del bloque y en bytes | `BackendVulkanUniformes.h` (ver §16.4) |
 
 ---
 
@@ -884,6 +885,7 @@ externos y el bitmap se subió a textura byte a byte.
 | 2026-10-11 | Gianfranco Ivan Enrique | Añadido el Patrón R16 (la resolución del `mtime` depende del toolchain, no del FS): la lectura del CRT de MinGW viene de `stat` (1 segundo) y su setter no aplica sobre directorios, de modo que el fallback de polling del `FileSystemWatcher` no observa cambios subsegundo ahi. El ctor del watcher ahora siembra el mtime real de la raíz en vez del epoch (evita un rescaneo vano al arrancar) y el intervalo quedó inyectable para poder probar el contrato. |
 | 2026-10-16 | Gianfranco Ivan Enrique | Añadido el noveno concepto (Patrón R17, el motor web multiproceso relanza tu binario): `CefExecuteProcess` al comienzo de `main` en editor y juego exportado, con init tras GL, bombeo por frame y apagado antes de romper ImGui/GL. |
 | 2026-10-20 | Gianfranco Ivan Enrique | Añadido el décimo concepto (Patrón R18, la imagen va a memoria local): el driver de Vulkan de la NVIDIA pierde el dispositivo al transferir con una imagen en memoria visible para la CPU, y el fallo pasaba inadvertido porque no se miraba el resultado de los envíos. |
+| 2026-10-20 | Gianfranco Ivan Enrique | Añadido el undécimo concepto (Patrón R19, el relleno de una matriz 3x3 en un bloque de uniformes va entre columnas): la matriz de normales se escribía con las columnas pegadas y el shader las leía corridas, con la iluminación deformada y sin ningún error. |
 
 ---
 
@@ -961,3 +963,108 @@ soporte bien: la copia a esa imagen deja el dispositivo en mal estado.
       de paso.
 - [ ] Los resultados de `vkQueueSubmit`, `vkQueueWaitIdle` y
       `vkEndCommandBuffer` se comprueban y se reportan.
+
+---
+
+## 16. Undécimo concepto: **El relleno de una matriz 3x3 en un bloque de uniformes va entre columnas**
+
+### 16.1 Descripción del problema
+
+En un bloque de uniformes (`std140`) una matriz 3x3 no ocupa 36 bytes: ocupa
+**48**, tres columnas de 16 bytes. Cada columna guarda sus tres componentes y
+los cuatro bytes siguientes son relleno, así que la segunda columna arranca 16
+bytes después de la primera y la tercera, 16 después de la segunda.
+
+Los datos de una matriz en memoria (los de `glm`, por ejemplo) van **seguidos**:
+36 bytes con las tres columnas pegadas. Copiar esos bytes al bloque tal cual
+deja la matriz con las columnas corridas: la primera se lee bien y las otras
+dos se leen desplazadas, mezclando el final de una columna con el principio de
+la siguiente.
+
+El resultado no es un crash ni un error: la matriz llega al shader con las
+columnas movidas y la iluminación sale mal (normales deformadas) sin que nada
+lo delate.
+
+La regla no es exclusiva de Vulkan: es el layout `std140` de GLSL, el mismo
+que usan los bloques de uniformes de OpenGL. Lo que cambia es quién hace la
+dispersión: en OpenGL la hace la API (`glUniformMatrix3fv` recibe 9 floats y
+el driver los reparte), y en Vulkan el backend escribe los bytes del bloque a
+mano, así que el reparto es responsabilidad de quien escribe.
+
+### 16.2 Síntomas
+
+- La iluminación de las mallas sale mal: las caras se iluminan como si
+  tuvieran la normal deformada, con zonas claras y oscuras que no siguen la
+  geometría.
+- No hay ningún error: el shader compila, los uniformes se encuentran, el
+  bloque se sube completo y el dibujo sale.
+- El síntoma depende del valor de la matriz: con la identidad el resultado
+  cambia (la columna 1 se lee como la 0), pero como la identidad deja la
+  normal casi igual, el problema puede pasar desapercibido en un material sin
+  luces.
+- Un test que compara el bloque byte a byte contra el "paquete" de 36 bytes
+  pasa, y aun así el shader lee otra cosa.
+
+### 16.3 Causa raíz
+
+```cpp
+// El slot de la matriz es de 48 bytes (tres columnas de 16) y los datos de
+// glm van seguidos: al copiarlos tal cual, la columna 1 queda en el byte 12
+// y el shader la lee en el byte 16.
+std::memcpy(bloque + offset, glm::value_ptr(matriz), 36 * sizeof(float));
+```
+
+El shader compilado lo dice explícitamente: el SPIR-V del programa declara
+`MatrixStride 16` para ese miembro, o sea que sus columnas están separadas 16
+bytes. Es el contrato del layout, no una interpretación: la lectura la hace el
+hardware con los offsets que declara el módulo.
+
+### 16.4 Solución canónica (Patrón R19 — la matriz se escribe en columnas separadas)
+
+**Al escribir una matriz en un bloque de uniformes se escribe en el layout del
+bloque, no en el de la memoria**: cada columna va en su lugar y el relleno
+queda a cero.
+
+```cpp
+// std140: cada columna de la matriz 3x3 ocupa 16 bytes (12 de datos y 4 de
+// relleno), asi que las columnas no van seguidas.
+const std::size_t paso = 16;
+const std::size_t datos = 3 * sizeof(float);
+if (offset + 3 * paso > tamanoBloque) return false;
+for (std::size_t columna = 0; columna < 3; ++columna) {
+    unsigned char* destino = bloque + offset + columna * paso;
+    std::memcpy(destino, valores + columna * 3, datos);
+    std::memset(destino + datos, 0, paso - datos);
+}
+```
+
+Puntos clave:
+
+- La escritura se hace **contra el tamaño real del bloque**, en bytes: el
+  límite se comprueba antes de escribir y una matriz que no entra se rechaza
+  sin tocar nada.
+- La matriz 4x4 no necesita dispersión: sus columnas son de 16 bytes justos,
+  así que en memoria y en el bloque ocupan lo mismo. La 3x3 sí.
+- El relleno se deja a cero: no lo lee el shader, pero deja el bloque
+  determinista y comparable byte a byte.
+- La fuente de verdad del layout es el **SPIR-V del shader** (`MatrixStride` y
+  `Offset` de cada miembro), no la memoria de la matriz.
+
+### 16.5 Checklist de mitigación
+
+- [ ] Toda matriz que se escriba en un bloque de uniformes va en el layout del
+      bloque: columnas separadas y relleno a cero.
+- [ ] El límite de la escritura se comprueba en **bytes** contra el tamaño
+      real del bloque, antes de copiar.
+- [ ] Contrastar los offsets y el `MatrixStride` del shader compilado
+      (`spirv-dis`) con la tabla de layout del backend.
+- [ ] Un test que compara byte a byte tiene que afirmar el layout del shader
+      (columnas separadas), no el de la memoria de la matriz.
+- [ ] Una comprobación que dependa de la normal necesita una luz: con solo
+      ambiente, el valor de la matriz de normales no cambia el color.
+
+### 16.6 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `BackendVulkan::setUniformMat3()` (`src/Rendering/BackendVulkan/BackendVulkanShaders.cpp`) | Escribir la matriz de normales de una malla en el bloque de uniformes | Compilador de shaders a SPIR-V (`glslangValidator`) sobre Windows y Linux | R19: la escritura reparte las columnas a paso de 16 bytes y deja el relleno a cero; el test headless afirma el layout y el test con GPU comprueba el color con una luz | `fix(render): escribir la matriz 3x3 con el layout de columnas de std140` |
