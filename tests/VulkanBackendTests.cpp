@@ -346,6 +346,150 @@ int main() {
         }
     }
 
+    // El batch de lineas se puede reescribir.
+    //
+    // El batch se reescribe en cada frame y a menudo con la misma cantidad de
+    // vertices (la grilla cambia de tamano, los gizmos no). Su memoria tiene
+    // que ser visible para la CPU y estar mapeada, porque la actualizacion
+    // escribe en ella. Con memoria DEVICE_LOCAL el mapeo no es valido: el
+    // batch se queda con la geometria inicial y el log se llena de fallos.
+    {
+        Handle programaLineas =
+            backend.createProgram(Contrato::ShaderKind::Lineas);
+        CHECK(programaLineas != Backend::kInvalidHandle,
+              "se crea el programa de lineas");
+
+        if (programaLineas != Backend::kInvalidHandle) {
+            // Un segmento son dos triangulos: cada vertice lleva el inicio y
+            // el fin del segmento, el lado (+1/-1), el avance a lo largo del
+            // segmento y el color (12 floats por vertice).
+            auto llenarSegmento = [](float* destino, float ax, float ay,
+                                     float bx, float by) {
+                const float lados[6] = {-1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f};
+                const float avances[6] = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f};
+                for (int i = 0; i < 6; ++i) {
+                    float* vertice = destino + i * 12;
+                    vertice[0] = ax;
+                    vertice[1] = ay;
+                    vertice[2] = -1.0f;
+                    vertice[3] = bx;
+                    vertice[4] = by;
+                    vertice[5] = -1.0f;
+                    vertice[6] = lados[i];
+                    vertice[7] = avances[i];
+                    vertice[8] = 1.0f;
+                    vertice[9] = 1.0f;
+                    vertice[10] = 1.0f;
+                    vertice[11] = 1.0f;
+                }
+            };
+
+            // Dibuja el batch en el render target y devuelve la imagen.
+            auto renderizarLineas = [&](Handle batch, unsigned int vertices) {
+                backend.beginFrame();
+                backend.setViewport(0, 0, kAncho, kAlto);
+                backend.applyBaseState();
+                backend.bindRenderTarget(objetivo);
+                backend.clearScreen(negro);
+                backend.useProgram(programaLineas);
+
+                const glm::mat4 identidad(1.0f);
+                escribirMatriz(backend, programaLineas, Contrato::Uniforme::kModel,
+                               identidad);
+                escribirMatriz(backend, programaLineas, Contrato::Uniforme::kView,
+                               identidad);
+                escribirMatriz(backend, programaLineas,
+                               Contrato::Uniforme::kProjection, identidad);
+
+                const int locationViewport =
+                    backend.uniformLocation(programaLineas,
+                                            Contrato::Uniforme::kViewport);
+                CHECK(locationViewport >= 0,
+                      "el programa de lineas expone el viewport");
+                if (locationViewport >= 0) {
+                    const float viewport[4] = {static_cast<float>(kAncho),
+                                               static_cast<float>(kAlto), 0.0f,
+                                               0.0f};
+                    backend.setUniformVec4(locationViewport, viewport);
+                }
+                const int locationWidth =
+                    backend.uniformLocation(programaLineas, Contrato::Uniforme::kWidth);
+                if (locationWidth >= 0) backend.setUniformFloat(locationWidth, 2.0f);
+                const int locationNear =
+                    backend.uniformLocation(programaLineas, Contrato::Uniforme::kNear);
+                if (locationNear >= 0) backend.setUniformFloat(locationNear, 0.1f);
+                const int locationCamara = backend.uniformLocation(
+                    programaLineas, Contrato::Uniforme::kCameraPosition);
+                if (locationCamara >= 0)
+                    backend.setUniformVec3(locationCamara, glm::vec3(0.0f, 0.0f, 0.0f));
+                const int locationFadeInicio = backend.uniformLocation(
+                    programaLineas, Contrato::Uniforme::kDistanceFadeStart);
+                const int locationFadeFin = backend.uniformLocation(
+                    programaLineas, Contrato::Uniforme::kDistanceFadeEnd);
+                if (locationFadeInicio >= 0)
+                    backend.setUniformFloat(locationFadeInicio, 1000.0f);
+                if (locationFadeFin >= 0)
+                    backend.setUniformFloat(locationFadeFin, 2000.0f);
+
+                backend.drawLineBatch(batch, vertices);
+                backend.endFrame();
+
+                std::vector<unsigned char> pixeles;
+                const bool leido = backend.leerPixeles(objetivo, pixeles);
+                CHECK(leido, "se leen los pixeles del render target con lineas");
+                return pixeles;
+            };
+
+            float vertices[6 * 12];
+            llenarSegmento(vertices, -0.8f, -0.8f, 0.8f, 0.8f);
+
+            Handle batch = backend.createLineBatch(vertices, 6);
+            CHECK(batch != Backend::kInvalidHandle, "se crea el batch de lineas");
+
+            if (batch != Backend::kInvalidHandle) {
+                const std::vector<unsigned char> primera =
+                    renderizarLineas(batch, 6);
+
+                // Se reescribe el batch con la misma cantidad de vertices y
+                // otra geometria (la diagonal contraria). Si la actualizacion no
+                // llega a la GPU, la segunda imagen es igual que la primera.
+                llenarSegmento(vertices, -0.8f, 0.8f, 0.8f, -0.8f);
+                backend.updateLineBatch(batch, vertices, 6);
+
+                const std::vector<unsigned char> segunda =
+                    renderizarLineas(batch, 6);
+
+                CHECK(primera.size() == esperadoTamano,
+                      "la imagen de la primera diagonal tiene el tamano esperado");
+                CHECK(segunda.size() == esperadoTamano,
+                      "la imagen de la segunda diagonal tiene el tamano esperado");
+
+                if (primera.size() == esperadoTamano &&
+                    segunda.size() == esperadoTamano) {
+                    int iluminados = 0;
+                    int distintos = 0;
+                    for (std::size_t i = 0; i < esperadoTamano; i += 4) {
+                        if (primera[i] > 8 || primera[i + 1] > 8 ||
+                            primera[i + 2] > 8) {
+                            ++iluminados;
+                        }
+                        if (primera[i] != segunda[i] ||
+                            primera[i + 1] != segunda[i + 1] ||
+                            primera[i + 2] != segunda[i + 2]) {
+                            ++distintos;
+                        }
+                    }
+                    CHECK(iluminados > 0, "la diagonal se dibuja en la imagen");
+                    CHECK(distintos > 10,
+                          "al reescribir el batch se dibuja otra geometria");
+                }
+
+                backend.destroyLineBatch(batch);
+            }
+            backend.destroyProgram(programaLineas);
+        }
+    }
+
     backend.destroyMesh(malla);
     backend.destroyProgram(programa);
     backend.destroyRenderTarget(objetivo);

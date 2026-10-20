@@ -111,6 +111,7 @@ recorrer(destFolder); // Ahora SÍ re-lee porque cache inválido
 | **R16 — La resolución del `mtime` depende del toolchain, no del FS** | NTFS registra el mtime con 100ns, pero la lectura de `std::filesystem::last_write_time` en el CRT de MinGW viene de `stat` (1 segundo) y su setter no aplica sobre directorios: una creación dentro del mismo segundo que la marca guardada no es observable ahi, mientras que con MSVC (FILETIME) si lo es. Quien compare mtimes para decidir (polling, invalidación de cache, hot reload) no debe depender de subsegundos, y un test que ejercite esa comparación debe hacer el cambio visible en ambas granularidades o constatar la limitación | `FileSystemWatcher` (fallback de polling), `tests/FileManagerTests.cpp` (bloque polling) |
 | **R17 — Tu binario también es el subproceso** | Un motor multiproceso (CEF) relanza el **mismo ejecutable** con `--type=...`: `CefExecuteProcess` debe correr al comienzo de `main`, antes de log/ventana/GL; devuelve -1 cuando el proceso no es subproceso y el motor sigue. Si no se corta ahí, el subproceso arranca la inicialización completa del motor en paralelo al proceso principal | `WebUIRuntime::ejecutarSubproceso` en `main.cpp` y `main_juego.cpp` (ver §13.4) |
 | **R19 — La matriz se escribe en el layout del bloque** | Los datos de una matriz en memoria van seguidos, pero en un bloque `std140` cada columna de una `mat3` ocupa 16 bytes: la escritura reparte las columnas a paso de 16 y deja el relleno a cero, contra el tamaño real del bloque y en bytes | `BackendVulkanUniformes.h` (ver §16.4) |
+| **R20 — La memoria que la CPU reescribe es visible para la CPU** | Un recurso que la CPU actualiza por frame se escribe en memoria mapeada: esa memoria tiene que ser `HOST_VISIBLE` (y `HOST_COHERENT` si se deja mapeada de forma permanente), no `DEVICE_LOCAL`, que es la propiedad adecuada para lo que se sube una vez y no se vuelve a tocar | `BackendVulkan::crearBatchLineas()` (ver §17.4) |
 
 ---
 
@@ -886,6 +887,7 @@ externos y el bitmap se subió a textura byte a byte.
 | 2026-10-16 | Gianfranco Ivan Enrique | Añadido el noveno concepto (Patrón R17, el motor web multiproceso relanza tu binario): `CefExecuteProcess` al comienzo de `main` en editor y juego exportado, con init tras GL, bombeo por frame y apagado antes de romper ImGui/GL. |
 | 2026-10-20 | Gianfranco Ivan Enrique | Añadido el décimo concepto (Patrón R18, la imagen va a memoria local): el driver de Vulkan de la NVIDIA pierde el dispositivo al transferir con una imagen en memoria visible para la CPU, y el fallo pasaba inadvertido porque no se miraba el resultado de los envíos. |
 | 2026-10-20 | Gianfranco Ivan Enrique | Añadido el undécimo concepto (Patrón R19, el relleno de una matriz 3x3 en un bloque de uniformes va entre columnas): la matriz de normales se escribía con las columnas pegadas y el shader las leía corridas, con la iluminación deformada y sin ningún error. |
+| 2026-10-20 | Gianfranco Ivan Enrique | Añadido el duodécimo concepto (Patrón R20, la memoria que la CPU reescribe es visible para la CPU): el batch de líneas se reescribía en una memoria `DEVICE_LOCAL`, que Vulkan no deja mapear, así que la geometría nueva no llegaba a la GPU y el log se llenaba de un fallo de mapeo por frame. |
 
 ---
 
@@ -1068,3 +1070,120 @@ Puntos clave:
 | # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
 |---|-----------|-----------|----------------|--------------|--------|
 | 1 | `BackendVulkan::setUniformMat3()` (`src/Rendering/BackendVulkan/BackendVulkanShaders.cpp`) | Escribir la matriz de normales de una malla en el bloque de uniformes | Compilador de shaders a SPIR-V (`glslangValidator`) sobre Windows y Linux | R19: la escritura reparte las columnas a paso de 16 bytes y deja el relleno a cero; el test headless afirma el layout y el test con GPU comprueba el color con una luz | `fix(render): escribir la matriz 3x3 con el layout de columnas de std140` |
+
+## 17. Duodécimo concepto: **La memoria que la CPU reescribe tiene que ser visible para la CPU**
+
+### 17.1 Descripción del problema
+
+Vulkan solo deja mapear (`vkMapMemory`) la memoria que tiene la propiedad
+`HOST_VISIBLE`. La memoria `DEVICE_LOCAL` vive en la VRAM y la CPU no la puede
+escribir directamente: para tocarla hay que copiar a un *buffer de paso* y
+transferirlo.
+
+El backend de Vulkan usa `DEVICE_LOCAL` como propiedad por defecto de
+`crearBufferVacio()`, y es la elección correcta para casi todo: las mallas, las
+texturas y los render targets se suben **una vez** y no se vuelven a tocar, así
+que conviene que vivan en la VRAM.
+
+El batch de líneas es la excepción: se reescribe **en cada frame** (la grilla,
+los gizmos, el realce del elemento apuntado), y su actualización se hace
+escribiendo directamente en la memoria del buffer a través de un
+`vkMapMemory`. Con la memoria `DEVICE_LOCAL` ese mapeo no es válido: la CPU
+nunca ve la geometría nueva.
+
+### 17.2 Síntomas
+
+- El log se llena de un fallo por frame:
+  `[Vulkan] vkMapMemory (batch): fallo VkResult -5` (en una sesión de editor de
+  10 minutos fueron 35.729 líneas).
+- La geometría del batch no cambia: la grilla y los gizmos se quedan con la
+  forma del primer frame.
+- No hay crash, ni pérdida de contexto, ni error de la API: el driver devuelve
+  un código de fallo, el backend lo registra y sigue dibujando.
+- El código de fallo es `-5` (`VK_ERROR_OUT_OF_DEVICE_MEMORY`), que lleva a
+  pensar que falta memoria en la GPU. **No falta memoria**: el problema son las
+  propiedades del tipo de memoria elegido, no su cantidad.
+
+### 17.3 Causa raíz
+
+```cpp
+// La memoria del batch se pide con la propiedad por defecto del backend
+// (DEVICE_LOCAL, la de las mallas y las texturas)...
+if (!crearBufferSubiendo(vertices, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          batch.vertices, batch.memoriaVertices)) {
+    return kInvalidHandle;
+}
+```
+
+```cpp
+// ...pero la actualización escribe en ella mapeándola, y Vulkan solo permite
+// mapear memoria HOST_VISIBLE.
+if (!okVulkan(funciones_.vkMapMemory(dispositivo_, b.memoriaVertices, 0, bytes, 0, &mapa),
+              "vkMapMemory (batch)"))
+    return;
+```
+
+La contradicción está en el mismo backend: el bloque de uniformes, que también
+se reescribe en cada frame, sí se pide `HOST_VISIBLE | HOST_COHERENT` y sí
+funciona. El batch quedó con la propiedad por defecto.
+
+En la máquina del caso, `vulkaninfo` muestra que el primer tipo de memoria con
+`DEVICE_LOCAL` **no** es `HOST_VISIBLE`, así que el mapeo falla siempre. El
+spec pide `VK_ERROR_MEMORY_MAP_FAILED` (-6) para ese caso; el driver de NVIDIA
+devuelve -5, lo que dispara la lectura equivocada de "memoria agotada".
+
+### 17.4 Solución canónica (Patrón R20 — la memoria que la CPU reescribe es visible para la CPU)
+
+**Si la CPU escribe en la memoria de un recurso cada frame, esa memoria se pide
+`HOST_VISIBLE | HOST_COHERENT` y se deja mapeada de forma permanente**: la
+actualización es un `memcpy` al puntero mapeado. Así se evita, además, el
+buffer de paso y la copia de transferencia que costaba cada frame.
+
+```cpp
+// La memoria del batch se deja mapeada de forma permanente: se actualiza en
+// cada frame, asi que no tiene sentido pedir un buffer de paso y una copia
+// de transferencia por frame.
+if (!crearBufferVacio(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                      batch.vertices, batch.memoriaVertices,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+    return false;
+}
+if (!okVulkan(funciones_.vkMapMemory(dispositivo_, batch.memoriaVertices, 0,
+                                     bytes, 0, &batch.mapaVertices),
+              "vkMapMemory (batch)")) {
+    return false;
+}
+```
+
+Puntos clave:
+
+- **El mapa permanente es seguro si el frame anterior está terminado antes de
+  escribir.** El backend espera su *fence* en `beginFrame()`, así que cuando la
+  CPU reescribe el batch la GPU ya terminó de leerlo. Es la misma razón por la
+  que el bloque de uniformes puede tener su mapa permanente.
+- **El mapa se levanta antes de liberar la memoria**: no se puede liberar
+  memoria que sigue mapeada.
+- **Lo que se sube una vez y no se toca sigue en `DEVICE_LOCAL`**: mallas,
+  texturas y render targets no pagan el coste de leer por PCIe sin necesidad.
+- **Un `vkMapMemory` sobre memoria no visible no se reintenta ni se Compensa**:
+  la respuesta correcta es mirar las propiedades del tipo de memoria que se
+  eligió, no la cantidad de memoria libre.
+
+### 17.5 Checklist de mitigación
+
+- [ ] Todo recurso que la CPU reescriba por frame (batch de líneas, sprites
+      dinámicos, textos) tiene memoria `HOST_VISIBLE | HOST_COHERENT`.
+- [ ] El recurso se mapea una vez, al crearlo, y se desmonta antes de liberar
+      su memoria.
+- [ ] Los recursos que se suben una vez y no se tocan siguen en `DEVICE_LOCAL`.
+- [ ] Un código de fallo de `vkMapMemory` se lee como un problema de
+      **propiedades** de la memoria antes que como un problema de **cantidad**.
+- [ ] Un test con GPU que reescriba el recurso y compruebe que el dibujo cambia:
+      sin él, el fallo se descubre en el log de una sesión larga.
+
+### 17.6 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `BackendVulkan::createLineBatch()` y `BackendVulkan::updateLineBatch()` (`src/Rendering/BackendVulkan/BackendVulkanRecursos.cpp`) | Reescribir la geometría del batch de líneas en cada frame | Driver de Vulkan de NVIDIA sobre Windows (`vulkaninfo` para leer los tipos de memoria) | R20: la memoria del batch es `HOST_VISIBLE | HOST_COHERENT` y queda mapeada de forma permanente; la actualización es un `memcpy`; el test con GPU reescribe el batch y comprueba que el dibujo cambia | `fix(render): escribir el batch de lineas en memoria visible para la CPU` |

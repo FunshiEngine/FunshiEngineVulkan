@@ -260,6 +260,10 @@ struct MallaVulkan {
 struct BatchLineasVulkan {
     VkBuffer vertices = VK_NULL_HANDLE;
     VkDeviceMemory memoriaVertices = VK_NULL_HANDLE;
+    // El batch se reescribe en cada frame, asi que su memoria se deja mapeada
+    // de forma permanente: la actualizacion es un memcpy al puntero mapeado,
+    // sin buffer de paso ni copia de transferencia por frame.
+    void* mapaVertices = nullptr;
     std::uint32_t verticesCount = 0;
     std::size_t capacidad = 0;
 };
@@ -428,6 +432,8 @@ private:
     bool crearBufferSubiendo(const void* datos, std::size_t bytes,
                               VkBufferUsageFlags uso, VkBuffer& buffer,
                               VkDeviceMemory& memoria);
+    bool crearBatchLineas(BatchLineasVulkan& batch, std::size_t bytes);
+    void liberarBatchLineas(BatchLineasVulkan& batch);
     bool crearRenderTarget(int ancho, int alto, RenderTargetVulkan& salida);
     VkShaderModule moduloDesdeSpirv(const std::uint32_t* codigo,
                                      std::size_t palabras);
