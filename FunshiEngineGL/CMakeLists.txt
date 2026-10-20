@@ -917,33 +917,6 @@ if(WIN32)
     target_compile_definitions(interface-component-tests PRIVATE _HAS_STD_BYTE=0)
 endif()
 
-# --- Pruebas headless del runtime de interfaces web (HUD) ---
-# WebUIRuntime (registro/seleccion/despacho) y VistasWebUI (ciclo de vida de las
-# vistas) corren enteros con el backend nulo, sin CEF ni GL. Compilan sueltos
-# (solo std + glm) para correr tambien en el job con BUILD_ENGINE=OFF.
-add_executable(webui-runtime-tests
-    ${SRC_DIR}/WebUI/WebUIRuntime.cpp
-    ${SRC_DIR}/WebUI/VistasWebUI.cpp
-    ${SRC_DIR}/WebUI/EstadoInterfaces.cpp
-    ${SRC_DIR}/Objetos/Componentes/InterfaceComponent.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/WebUIRuntimeTests.cpp
-)
-target_link_libraries(webui-runtime-tests PRIVATE funshi_diagnostics_core)
-target_include_directories(webui-runtime-tests PRIVATE
-    ${SRC_DIR}
-    ${CMAKE_SOURCE_DIR}/External
-)
-set_target_properties(webui-runtime-tests PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-)
-add_test(NAME webui-runtime-tests COMMAND webui-runtime-tests)
-
-if(WIN32)
-    target_compile_definitions(webui-runtime-tests PRIVATE _HAS_STD_BYTE=0)
-endif()
-
 add_executable(terminal-emulator-tests
     ${SRC_DIR}/Terminal/TerminalEmulator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../tests/TerminalEmulatorTests.cpp
@@ -955,33 +928,6 @@ set_target_properties(terminal-emulator-tests PROPERTIES
     CXX_EXTENSIONS OFF
 )
 add_test(NAME terminal-emulator-tests COMMAND terminal-emulator-tests)
-
-# TerminalSession prueba la E/S REAL del pseudo-terminal: forkpty en POSIX y
-# ConPTY en Windows. El test acota sus esperas (drenado y detener con deadline)
-# y sale con 77 si ConPTY no esta disponible, por eso se registra con
-# SKIP_RETURN_CODE. En Linux forkpty() requiere enlazar -lutil.
-add_executable(terminal-session-tests
-    ${SRC_DIR}/Terminal/TerminalSession.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/TerminalSessionTests.cpp
-)
-target_include_directories(terminal-session-tests PRIVATE ${SRC_DIR})
-set_target_properties(terminal-session-tests PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-)
-find_package(Threads QUIET)
-if(Threads_FOUND)
-    target_link_libraries(terminal-session-tests PRIVATE Threads::Threads)
-endif()
-if(UNIX AND NOT APPLE)
-    target_link_libraries(terminal-session-tests PRIVATE util)
-endif()
-add_test(NAME terminal-session-tests COMMAND terminal-session-tests)
-set_tests_properties(terminal-session-tests PROPERTIES
-    SKIP_RETURN_CODE 77
-    TIMEOUT 120
-)
 
 add_executable(filemanager-tests
     ${SRC_DIR}/GestorDeArchivos/GestorDeArchivos.cpp

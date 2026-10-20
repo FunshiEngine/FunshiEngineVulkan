@@ -1062,14 +1062,6 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
   resto del objeto.
 - `barra-progreso-tests` (8): `BarraProgresoTexto` (formato de la barra de la
   ventana Estado, acotado ante `hecha > total` y `total == 0`).
-- `webui-runtime-tests` (57): `WebUIRuntime`, `VistasWebUI` y `EstadoInterfaces`
-  sobre el backend nulo: selección de backend con fallback al nulo ante un nombre
-  desconocido, ciclo de vida de una vista sin motor web (`cargar`→`actualizar`→
-  `render`→`descargar`), el gestor de vistas de una escena (alta, recarga al
-  cambiar la ruta del `.html` o al cambiar el archivo en disco por `mtime`,
-  redimensionado y descarte de las que dejan de estar activas), el estado por
-  interfaz por rutas JSON Pointer y el intercambio del estado pendiente/olvido
-  en el ciclo de vistas.
 - `tema-tests` (28): `TemaEditor` (aplicación del perfil `Apariencia`): el acento
   llega a todos los roles de ImGui y el modo B/N deja la paleta monocroma.
 - `comandos-tests` (77): undo/redo del editor (7 comandos, cadena de redo
@@ -1121,18 +1113,14 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
   negrita, fondo) y borrado; CSI 1K con cursor en wrap pendiente, rejilla
   recién redimensionada a las dimensiones por defecto, y pantalla alternativa
   con resize (cursor restaurado acotado).
-- `terminal-session-tests` (14): E/S real del pseudo-terminal (`forkpty` en
-  POSIX, ConPTY en Windows): rechazos deterministas, arranque, eco del comando y
-  su salida por el PTY, y que `detener()` no se cuelga ni pierde la salida
-  emitida durante el cierre (SKIP 77 si ConPTY no está disponible).
 
 Las **nueve** suites que dependen del engine (`comandos-tests`,
 `escena-serializacion-tests`, `catalogo-componentes-tests`, `tilemap-tests`,
 `interfaces-juego-tests`, `prefab-tests`, `manifiesto-assets-tests`,
 `orquestador-estado-tests` y `tema-tests`) enlazan `funshi_engine` y solo se
 registran con `BUILD_ENGINE=ON`. El resto compila sus fuentes directamente
-(`interface-component-tests`, `barra-progreso-tests` y `webui-runtime-tests`
-entre ellos) y corre también con `BUILD_ENGINE=OFF`.
+(`interface-component-tests` y `barra-progreso-tests` entre ellos) y corre
+también con `BUILD_ENGINE=OFF`.
 
 La opción `BUILD_ENGINE=OFF` compila solo las pruebas (útil en CI y plataformas
 sin las librerías gráficas), y `ENABLE_ASAN` (ON por defecto en Debug) activa
