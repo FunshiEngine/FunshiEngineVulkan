@@ -37,6 +37,8 @@ licencias originales, que se resumen a continuación junto a su ubicación.
 > SOFTWARE.
 
 - **Dear ImGui**: aviso completo en la cabecera de `imgui.h` / `imgui.cpp`.
+  Incluye el backend de render para Vulkan (`imgui_impl_vulkan.h/.cpp`),
+  vendorizado sin modificar desde el mismo commit que el resto de ImGui.
   Proyecto: https://github.com/ocornut/imgui
 - **ImGuizmo**: aviso completo en `FunshiEngineGL/ImGuizmo/LICENSE`.
   Proyecto: https://github.com/CedricGuillemet/ImGuizmo

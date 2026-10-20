@@ -41,21 +41,27 @@ por arrastre y escribir scripts con la API exacta que expone el motor.
 
 ## 1. Requisitos e inicio rapido
 
-**Dependencias:** CMake >= 3.16, compilador con C++17, GLFW, GLM, Assimp y
-Bullet. Java es opcional (solo scripting Java): si el build encuentra un JDK, se
-compila el soporte `FUNSHI_JAVA=ON` automaticamente.
+**Dependencias:** CMake >= 3.16, compilador con C++17, GLFW, GLM, Assimp,
+Bullet, la libreria de Vulkan y un compilador de shaders a SPIR-V (`glslc` del
+Vulkan SDK o `glslangValidator`). Java es opcional (solo scripting Java): si el
+build encuentra un JDK, se compila el soporte `FUNSHI_JAVA=ON` automaticamente.
 
-El motor no depende de ninguna API gráfica: define el contrato de render y lo
-resuelve un backend que se instala en tiempo de ejecución. El que viene en este
-repositorio cumple el contrato y no dibuja, así que el editor abre, se recorre
-la escena y las pasadas de dibujo se omiten. El backend que se instale es el
-que fija la API gráfica y el dialecto de los shaders.
+El motor no depende de ninguna API grafica: define el contrato de render y lo
+resuelve un backend que se instala en tiempo de ejecucion. El que viene en este
+repositorio es el de **Vulkan**: dibuja la escena y la interfaz con Vulkan, y
+es el que fija el API grafica y el dialecto de los shaders. Si la maquina no
+tiene Vulkan, el backend no arranca y el editor abre sin dibujar.
 
 ```bash
 cmake -S FunshiEngineGL -B FunshiEngineGL/build
 cmake --build FunshiEngineGL/build -j$(nproc)
 ./FunshiEngineGL/build/FunshiEngineGL
 ```
+
+El backend se puede dejar de compilar con `-DFUNSHI_VULKAN=OFF` (el editor
+arranca entonces sin dibujar). Si la maquina tiene varias GPUs y hay que
+elegir una, la variable de entorno `FUNSHI_VULKAN_GPU` fuerza una por su indice
+(0 es la primera).
 
 **Primeros pasos:**
 

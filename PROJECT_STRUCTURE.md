@@ -119,6 +119,10 @@ FunshiEngineGL/                          ← raíz del repo
 │   ├── ScriptsJavaTests.cpp             ← BackendJava end-to-end (solo con FUNSHI_JAVA)
 │   ├── AudioEngineTests.cpp             ← AudioEngine/AudioClipsManager con NullAudioBackend
 │   ├── SceneSerializationTests.cpp      ← round-trip de escena + nombres por defecto
+│   ├── ContratoRenderTests.cpp          ← headless del contrato de render (backend nulo y
+│   │                                      backend de mentira, sin GPU)
+│   ├── VulkanBackendTests.cpp           ← headless del backend de Vulkan (dibuja sobre un render
+│   │                                      target y lee los píxeles; *skipped* si no hay GPU)
 │   └── UserInterfaceTests.cpp           ← modelo del Creador de interfaces (round-trip JSON)
 └── FunshiEngineGL/                      ← proyecto CMake principal
     ├── CMakeLists.txt                   ← GLOB de fuentes, dependencias, sanitizers,
@@ -306,8 +310,11 @@ FunshiEngineGL/                          ← raíz del repo
         ├── Input/
         │   └── EditorInput.h/.cpp       ← callbacks GLFW de teclado/mouse + máquina de
         │                                  movimiento de cámara (extraídas de main.cpp)
-        ├── ImGui/                        ← Dear ImGui v1.x integrado (backend glfw + fachada
-        │                                  de render propia, sin backend gráfico atado)
+        ├── ImGui/                        ← Dear ImGui v1.x integrado (backend glfw + backend
+        │                                  vulkan de upstream + fachada de render propia)
+        │   ├── BackendImGui.h            ← fachada (MotorImGui: init/shutdown/newFrame/render)
+        │   ├── BackendImGui.cpp          ← implementación sobre el backend de Vulkan
+        │   └── imgui_impl_vulkan.*       ← backend de render de Vulkan (upstream, sin modificar)
         ├── Matematicas/
         │   └── StructVec3.h/.cpp         ← vec3 propio
         ├── Rendering/
@@ -337,6 +344,24 @@ FunshiEngineGL/                          ← raíz del repo
         │   │   │                              DepthFunc, recursos GPU, estados, render target)
         │   │   ├── BackendNulo.h/.cpp      ← implementación en blanco (cumple el contrato, no dibuja)
         │   │   └── BackendActivo.cpp       ← backend activo e instalacion (instalarBackend)
+        │   ├── BackendVulkan/             ← implementación del contrato sobre Vulkan
+        │   │   ├── BackendVulkan.h/.cpp   ← instancia, dispositivo, swapchain, render passes,
+        │   │   │                              pipelines, recursos y pasadas
+        │   │   ├── BackendVulkanRecursos.cpp ← buffers, mallas, texturas, render targets, lectura
+        │   │   │                              de píxeles
+        │   │   ├── BackendVulkanShaders.cpp ← programas por tipo, pipelines por estado y destino,
+        │   │   │                              descriptores, anillo de uniforms y conversión de
+        │   │   │                              la convención de las matrices
+        │   │   ├── BackendVulkanDibujo.cpp ← apertura y cierre de pasadas y dibujados
+        │   │   ├── LayoutUniformes.h/.cpp  ← layout std140 del bloque de uniforms, derivado del
+        │   │   │                              contrato (offset de cada uniform)
+        │   │   ├── ShadersSPIRV.h          ← declaración del SPIR-V embebido de los shaders
+        │   │   └── Shaders/                ← fuentes GLSL 450 (se compilan a SPIR-V en build)
+        │   │       ├── Malla.vert/.frag
+        │   │       ├── Lineas.vert/.frag
+        │   │       ├── Sprites.vert/.frag
+        │   │       ├── Cielo.vert/.frag
+        │   │       └── Cubemap.vert/.frag
         │   └── Shaders/                    ← ShaderProgram (el fuente del shader es del backend)
         │       ├── ShaderProgram.h/.cpp
         │       └── ShaderException.h

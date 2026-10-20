@@ -883,6 +883,7 @@ externos y el bitmap se subió a textura byte a byte.
 | 2026-10-11 | Gianfranco Ivan Enrique | Añadido el Patrón R15 (el separador nativo manda al comparar rutas) a la tabla de patrones: `std::filesystem` arma `\logs` en Windows y los tests comparaban contra literales con `/`, lo que dejaba 6 comprobaciones rojas solo en windows-latest. |
 | 2026-10-11 | Gianfranco Ivan Enrique | Añadido el Patrón R16 (la resolución del `mtime` depende del toolchain, no del FS): la lectura del CRT de MinGW viene de `stat` (1 segundo) y su setter no aplica sobre directorios, de modo que el fallback de polling del `FileSystemWatcher` no observa cambios subsegundo ahi. El ctor del watcher ahora siembra el mtime real de la raíz en vez del epoch (evita un rescaneo vano al arrancar) y el intervalo quedó inyectable para poder probar el contrato. |
 | 2026-10-16 | Gianfranco Ivan Enrique | Añadido el noveno concepto (Patrón R17, el motor web multiproceso relanza tu binario): `CefExecuteProcess` al comienzo de `main` en editor y juego exportado, con init tras GL, bombeo por frame y apagado antes de romper ImGui/GL. |
+| 2026-10-20 | Gianfranco Ivan Enrique | Añadido el décimo concepto (Patrón R18, la imagen va a memoria local): el driver de Vulkan de la NVIDIA pierde el dispositivo al transferir con una imagen en memoria visible para la CPU, y el fallo pasaba inadvertido porque no se miraba el resultado de los envíos. |
 
 ---
 
@@ -915,3 +916,48 @@ externos y el bitmap se subió a textura byte a byte.
   (`v8_context_snapshot.bin`, `chrome_100/200_percent.pak`, `resources.pak`,
   `icudtl.dat`, `locales/`, `libcef.so`), que `CefExecuteProcess` se llame
   primero en `main`, y que `argv[0]` apunte al binario real.
+
+## 15. Décimo concepto: **El driver de Vulkan pierde el dispositivo con una imagen en memoria visible para la CPU**
+
+### 15.1 Descripción del problema
+
+En una máquina con dos GPUs (una NVIDIA GeForce GTX 1050 y una Intel HD
+Graphics 630), el driver de Vulkan de la NVIDIA **pierde el dispositivo**
+(`VK_ERROR_DEVICE_LOST`) en cuanto se hace una transferencia con la imagen
+asignada en memoria visible para la CPU (`VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT`).
+Con la misma carga, la GPU integrada responde bien.
+
+### 15.2 Síntomas
+
+- `vkQueueWaitIdle` devuelve `-4` (`VK_ERROR_DEVICE_LOST`) después del primer
+  envío con una copia buffer ↔ imagen.
+- El motor **no se queja**: los comandos enviados no llegan a ejecutarse y la
+  imagen queda vacía. Sin las capas de validación el fallo es silencioso, y
+  sin mirar el resultado de los envíos tampoco se ve.
+
+### 15.3 Causa raíz
+
+Una imagen con `VK_IMAGE_TILING_OPTIMAL` asignada en memoria del sistema (y
+no en memoria local del dispositivo) no es una combinacion que el driver
+soporte bien: la copia a esa imagen deja el dispositivo en mal estado.
+
+### 15.4 Solución canónica (Patrón R18 — la imagen va a memoria local)
+
+- **Las imagenes (render targets, texturas, swapchain) se asignan en memoria
+  `DEVICE_LOCAL`**: es donde deben estar, y es lo que evita el problema.
+- **Los buffers de paso (los que la CPU escribe y la GPU lee) si van en memoria
+  visible para la CPU** (`HOST_VISIBLE | HOST_COHERENT`): de ahi se copian a
+  la imagen con una copia de buffer a imagen.
+- **El resultado de los envíos se mira**: `vkQueueSubmit`, `vkQueueWaitIdle` y
+  `vkEndCommandBuffer` se comprueban, y un `VK_ERROR_DEVICE_LOST` se reporta
+  en el log en vez de dejarlo pasar en silencio.
+
+### 15.5 Checklist de mitigación
+
+- [ ] Toda imagen creada con `vkCreateImage` se asigna con memoria
+      `DEVICE_LOCAL` (`asignarMemoria` con `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT`).
+- [ ] Todo buffer que la CPU escribe y la GPU lee tiene
+      `HOST_VISIBLE | HOST_COHERENT` y se sube con una copia desde un buffer
+      de paso.
+- [ ] Los resultados de `vkQueueSubmit`, `vkQueueWaitIdle` y
+      `vkEndCommandBuffer` se comprueban y se reportan.

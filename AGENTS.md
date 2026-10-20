@@ -252,7 +252,7 @@ implementa acá es el backend.
 | Contrato del backend | `src/Rendering/Backend/IRenderBackend.h` | La interfaz que implementa el backend: recursos (malla, batch de líneas, texturas 2D, cubemap, render target, programa), estado (viewport, profundidad, blend) y draws. |
 | Backend nulo | `src/Rendering/Backend/BackendNulo.{h,cpp}` | La implementación en blanco: `init()` correcto, `available()` falso, recursos inválidos. |
 | Backend activo | `src/Rendering/Backend/BackendActivo.cpp` | La instancia activa: `activeBackend()` y `instalarBackend()`. |
-| Fachada de la interfaz | `src/ImGui/BackendImGui.h` + `BackendImGuiNulo.cpp` | `MotorImGui::{init,shutdown,newFrame,render,hayRenderer,nombreRenderer}`; en el core la implementación es nula. |
+| Fachada de la interfaz | `src/ImGui/BackendImGui.h` + `BackendImGui.cpp` | `MotorImGui::{init,shutdown,newFrame,render,hayRenderer,nombreRenderer}`; en este repositorio la implementación dibuja con el backend de ImGui de Vulkan (en el core es nula). |
 | Backend de Vulkan | `src/Rendering/BackendVulkan/` | La implementación real del contrato sobre Vulkan: loader, instancia, dispositivo, swapchain, pipelines, recursos y pasadas. |
 
 Reglas que se sostienen en este repositorio:
@@ -299,11 +299,17 @@ Reglas propias de la implementación de Vulkan:
 - **El backend no toca el motor.** Todo lo que el motor necesita se resuelve
   por el contrato (`IRenderBackend`) o por la fachada de la interfaz
   (`MotorImGui`). Un `if (vulkan)` en el motor es un error de diseño.
-- **El loader de Vulkan se carga en tiempo de ejecución** (el mismo criterio que
-  usaba `GLFuncs.h` con las funciones de GL): el motor tiene que arrancar en una
-  máquina sin Vulkan.
+- **La librería de Vulkan se enlaza** (`find_package(Vulkan)`): las funciones de
+  nivel de instancia se llaman directo y las de nivel de dispositivo se
+  resuelven con `vkGetDeviceProcAddr`. El costo es que el proceso necesita la
+  librería instalada para arrancar.
 - **El SPIR-V se compila en build time y va embebido en el ejecutable**: el
-  runtime no depende de un compilador de shaders ni de leer archivos.
+  runtime no depende de un compilador de shaders ni de leer archivos. Los
+  fuentes GLSL viven en `src/Rendering/BackendVulkan/Shaders/` y CMake los
+  compila con `glslc` o `glslangValidator`.
+- **La interfaz se dibuja en una pasada propia** sobre la imagen del swapchain
+  (después de la escena, sin profundidad): el pipeline de ImGui no lleva
+  estado de profundidad y no es compatible con la pasada de la escena.
 - **Los tests que necesitan GPU se marcan como *skipped* (77)** cuando la
   máquina no tiene Vulkan, para que la suite siga siendo verde en un runner sin
   GPU.
