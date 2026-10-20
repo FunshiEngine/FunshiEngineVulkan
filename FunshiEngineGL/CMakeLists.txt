@@ -490,6 +490,9 @@ if(FUNSHI_VULKAN)
         CXX_EXTENSIONS OFF
     )
     add_test(NAME vulkan-backend-tests COMMAND vulkan-backend-tests)
+    # El test devuelve 77 cuando la maquina no tiene un dispositivo Vulkan
+    # utilizable: ctest lo reporta como SKIP en lugar de fallo.
+    set_tests_properties(vulkan-backend-tests PROPERTIES SKIP_RETURN_CODE 77)
 else()
     target_compile_definitions(funshi_engine PUBLIC FUNSHI_VULKAN=0)
     # Sin el backend de Vulkan no se compilan ni el backend ni el de ImGui:
