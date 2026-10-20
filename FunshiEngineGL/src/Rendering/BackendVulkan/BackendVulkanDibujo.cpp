@@ -339,6 +339,9 @@ void BackendVulkan::drawLineBatch(Handle batch, unsigned int vertexCount) {
         programaEnUso_->layoutPipeline, 0, 1, &conjunto, 1, &offsetDinamico);
 
     const VkBuffer bufferVertices = encontrado->second.vertices;
+    // El batch puede quedarse sin buffer si su recreacion fallo: ligar un
+    // buffer nulo no es una llamada valida.
+    if (bufferVertices == VK_NULL_HANDLE) return;
     const VkDeviceSize offset = 0;
     funciones_.vkCmdBindVertexBuffers(comando_, 0, 1, &bufferVertices, &offset);
     funciones_.vkCmdDraw(comando_, vertexCount, 1, 0, 0);
