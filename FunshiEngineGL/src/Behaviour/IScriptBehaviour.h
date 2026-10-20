@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,26 @@
 #include "Reflection/BehaviourReflection.h"
 #include "ScriptGameObject.h"
 
+class Collider;
+
+// Marca de exportacion de la fabrica FUNSHI_CREAR_COMPORTAMIENTO (H-15).
+// En Windows/MSVC una funcion de una .dll NO se exporta sola: sin
+// __declspec(dllexport) la .dll compila pero su tabla de exportaciones no
+// contiene la fabrica, GetProcAddress devuelve NULL y el motor reporta "El
+// .so no exporta 'FUNSHI_CREAR_COMPORTAMIENTO'". En MinGW/Linux/macOS los
+// simbolos se exportan por defecto, por eso el bug no se veia ahi.
+// Uso en el fuente del script:
+//
+//   extern "C" FUNSHI_COMPORTAMIENTO_EXPORT IScriptBehaviour*
+//   FUNSHI_CREAR_COMPORTAMIENTO(const MotorScript::ApiScriptGameObject* api) {
+//       ...
+//   }
+#if defined(_WIN32) && defined(_MSC_VER)
+#define FUNSHI_COMPORTAMIENTO_EXPORT __declspec(dllexport)
+#else
+#define FUNSHI_COMPORTAMIENTO_EXPORT
+#endif
+
 class IScriptBehaviour {
 public:
     // Tabla de acceso a GameObject que inyecta el motor al cargar el script.
@@ -28,14 +48,31 @@ public:
     const MotorScript::ApiScriptGameObject* api = nullptr;
 
     // Tabla de servicios de escena (audio, busqueda, teclado), inyectada por
-    // el motor al cargar. Los scripts la usan como
-    // `if (servicios) servicios->reproducirSonido(...)`; comprobar version con
-    // `servicios->version >= 1` si se quiere blindar contra builds viejas.
+    // el motor al cargar. Los scripts C++ la usan como
+    // `if (servicios) servicios->reproducirSonido(...)`; Java usa Nativo.*.
     const MotorScript::ScriptServices* servicios = nullptr;
 
     virtual ~IScriptBehaviour() {}
     virtual void onStart(GameObject* owner) = 0;
     virtual void onUpdate(GameObject* owner, float deltaTime) = 0;
+    virtual void onCollisionEnter(GameObject* owner, Collider* propio,
+                                  Collider* otro) {
+        (void)owner;
+        (void)propio;
+        (void)otro;
+    }
+    virtual void onCollisionStay(GameObject* owner, Collider* propio,
+                                 Collider* otro) {
+        (void)owner;
+        (void)propio;
+        (void)otro;
+    }
+    virtual void onCollisionExit(GameObject* owner, Collider* propio,
+                                 Collider* otro) {
+        (void)owner;
+        (void)propio;
+        (void)otro;
+    }
 
     // Opcional: recibe la tabla de punteros que implementa el motor en la TU
     // del ejecutable (así el .so del script no enlaza símbolos del motor).

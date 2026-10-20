@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +47,7 @@
 // el color de cada extremo para conservar los difuminados por vertice (la
 // grilla se funde en el horizonte).
 //
-// Es CPU puro a proposito: no incluye OpenGL ni glm, asi se puede probar en los
+// Es CPU puro a proposito: no incluye la pila grafica ni glm, asi se puede probar en los
 // targets headless (tests/RenderingTests.cpp) igual que Mesh::computeTangents.
 class LineBuilder {
 public:

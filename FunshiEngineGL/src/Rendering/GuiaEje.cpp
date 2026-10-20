@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,8 @@
 #include "GuiaEje.h"
 
 #include <cmath>
+
+#include "../Configuracion/Apariencia.h"
 
 namespace GuiaEje {
 namespace {
@@ -63,18 +65,6 @@ bool calcularEje(const float matrizGlobal[16], int eje, bool coordenadasGlobales
     if (amplitud < kAmplitudMinima) return false;
     for (int i = 0; i < 3; ++i) out->dir[i] = dir[i] / amplitud;
     return true;
-}
-
-float opacidad(float distancia, const Difuminado& dif) {
-    if (!std::isfinite(distancia) || dif.fin <= dif.inicio) return 1.0f;
-    // t se acota a [0,1] ANTES de elevar al cuadrado: sin ese recorte, los
-    // puntos mas cercanos que "inicio" dan t negativo y el cuadrado los baja de
-    // opacos, con lo que hasta el centro de la vista se veria translucido.
-    float t = (distancia - dif.inicio) / (dif.fin - dif.inicio);
-    if (t < 0.0f) t = 0.0f;
-    if (t > 1.0f) t = 1.0f;
-    const float a = 1.0f - t * t;
-    return a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
 }
 
 void emitir(LineBuilder& out, const Eje& eje, const float camaraMundo[3],
@@ -143,7 +133,7 @@ void emitir(LineBuilder& out, const Eje& eje, const float camaraMundo[3],
                             punto[2] - camaraMundo[2]};
         const float distancia =
             std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-        const float alpha = opacidad(distancia, dif);
+        const float alpha = dif.opacidad(distancia);
 
         if (i > 0) {
             const float rgbaA[4] = {color[0], color[1], color[2], alphaAnterior};
@@ -170,6 +160,20 @@ void colorEje(int eje, float rgba[4]) {
             rgba[0] = rgba[1] = rgba[2] = 1.0f; break;
     }
     rgba[3] = 1.0f;
+}
+
+void colorEfectivo(int eje, const float referencia[3], float rgba[4]) {
+    if (!rgba) return;
+    colorEje(eje, rgba);
+    if (!referencia) return;
+    // ejeContraste escribe sobre "out" mientras lee "base", asi que el resultado
+    // va a un arreglo aparte y recien ahi se copia.
+    const float base[3] = {rgba[0], rgba[1], rgba[2]};
+    float ajustado[3];
+    AparienciaUtil::ejeContraste(base, referencia, ajustado);
+    rgba[0] = ajustado[0];
+    rgba[1] = ajustado[1];
+    rgba[2] = ajustado[2];
 }
 
 } // namespace GuiaEje

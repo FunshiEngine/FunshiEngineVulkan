@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,18 +19,17 @@
 #ifndef SETTINGSRIGIDBODY_H
 #define SETTINGSRIGIDBODY_H
 #include "../SettingsComponent.h"
-class GameObject;
-class RigidBody;
+#include "../../../Objetos/Componentes/RigidBody/RigidBody.h"
+#include "../../../Scenes/EditorController.h"
 
 class SettingsRigidBody : public SettingsComponent {
 protected:
 	RigidBody* myCollider;
-	bool stateRigidBody = false;
+	EditorController* editor = nullptr;
 public:
-	SettingsRigidBody(GameObject* objeto);
-
-	// CONFIGURAR EL SISTEMA PARA QUE AL ACTIVAR SEA UN GHOST BODY, FALSO UN COMUN BODY
+	explicit SettingsRigidBody(GameObject* objeto);
+	void setEditor(EditorController* editor);
 	void showDataComponent() override;
-	Component* getComponent() override;
+	Component* getComponent() override { return myCollider; }
 };
 #endif

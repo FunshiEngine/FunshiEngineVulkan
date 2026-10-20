@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,28 +19,37 @@
 // Prueba de punta a punta del runtime de scripts: escribe un fuente C++ en un
 // directorio temporal, lo compila con el BackendCpp a .so, lo carga con
 // dlopen, inyecta valores SerializeField, ejecuta onInicio/onActualizar/onStop
-// y valida el hot reload (recompilacion al cambiar el fuente + mtime).
+// y valida el hot reload (recompilacion al cambiar el fuente + mtime) y la
+// carga de un segundo componente sobre el MISMO fuente (reutiliza el
+// artefacto al dia sin volver a enlazar).
 // Si no hay compilador C++ en el entorno el test sale con SKIP (77) para que
 // CI de maquinas minimalistas no lo marque como fallo.
 
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "TempPruebas.h"
+#include "../FunshiEngineGL/src/Behaviour/Backends/BackendCpp.h"
+#include "../FunshiEngineGL/src/Behaviour/Backends/ComandoCompilacionCpp.h"
+#include "../FunshiEngineGL/src/Behaviour/Backends/SondeoToolchain.h"
 #include "../FunshiEngineGL/src/Behaviour/Reflection/BehaviourReflection.h"
 #include "../FunshiEngineGL/src/Behaviour/ScriptRuntime.h"
+#include "../FunshiEngineGL/src/Diagnosticos/RegistroDiagnosticos.h"
 
 // Stub de MotorScript::tablaApi(): en el motor real lo implementa
 // ScriptGameObject.cpp (necesita GameObject completo); el test solo verifica
-// que el backend entrega una tabla no nula a la fabrica. Vive FUERA del guard
-// _WIN32 para que BackendCpp.cpp (que lo referencia) enlace tambien en
-// Windows: alli el main solo devuelve 77 (SKIP) pero el simbolo debe existir.
+// que el backend entrega una tabla no nula a la fabrica. Vive fuera de
+// cualquier guard de plataforma: BackendCpp.cpp (que lo referencia) se
+// compila en todas, y el main tampoco se salta por SO sino por familia de
+// toolchain (ver abajo).
 namespace MotorScript {
 const ApiScriptGameObject* tablaApi() {
     static const ApiScriptGameObject tabla = {
@@ -56,19 +65,41 @@ const ApiScriptGameObject* tablaApi() {
         [](void*, float, float, float, float) {},
         /* .imprimirConsola  = */
         [](const char*) {},
+        /* .rotacionAngulo = */ [](const void*) { return 0.0f; },
+        /* .rotacionEjeX = */ [](const void*) { return 0.0f; },
+        /* .rotacionEjeY = */ [](const void*) { return 1.0f; },
+        /* .rotacionEjeZ = */ [](const void*) { return 0.0f; },
+        /* .escalaX = */ [](const void*) { return 1.0f; },
+        /* .escalaY = */ [](const void*) { return 1.0f; },
+        /* .escalaZ = */ [](const void*) { return 1.0f; },
+        /* .fijarVelocidadHorizontal = */ [](void*, float, float) {
+            return false;
+        },
+        /* .saltar = */ [](void*, float) { return false; },
+        /* .etiqueta = */ [](const void*) { return ""; },
+        /* .tieneEtiqueta = */ [](const void*, const char*) { return false; },
+        /* .objetoDeCollider = */ [](const void*) -> void* { return nullptr; },
+        /* .masa = */ [](const void*) { return 0.0f; },
+        /* .fijarMasa = */ [](void*, float) { return false; },
+        /* .usaGravedad = */ [](const void*) { return false; },
+        /* .fijarUsoGravedad = */ [](void*, bool) { return false; },
+        /* .escalaGravedad = */ [](const void*) { return 0.0f; },
+        /* .fijarEscalaGravedad = */ [](void*, float) { return false; },
+        /* .friccion = */ [](const void*) { return 0.0f; },
+        /* .fijarFriccion = */ [](void*, float) { return false; },
+        /* .posicionCongelada = */ [](const void*, int) { return false; },
+        /* .fijarFreezePosicion = */ [](void*, bool, bool, bool) {
+            return false;
+        },
+        /* .rotacionCongelada = */ [](const void*, int) { return false; },
+        /* .fijarFreezeRotacion = */ [](void*, bool, bool, bool) {
+            return false;
+        },
+        /* .version = */ 5,
     };
     return &tabla;
 }
 } // namespace MotorScript
-
-#ifdef _WIN32
-int main() {
-    std::cout << "scripts-runtime-tests: SKIP en Windows (requiere cl.exe con "
-                 "entorno de Visual Studio)."
-              << std::endl;
-    return 77;
-}
-#else
 
 using namespace ReflejoScripts;
 
@@ -112,6 +143,15 @@ static std::string fuenteScript(const std::string& clase) {
         "        pasos += 1;\n"
         "        if (api) api->imprimirConsola(\"hola\");\n"
         "    }\n"
+        "    void onCollisionEnter(GameObject*, Collider*, Collider*) override {\n"
+        "        pasos += 10;\n"
+        "    }\n"
+        "    void onCollisionStay(GameObject*, Collider*, Collider*) override {\n"
+        "        pasos += 20;\n"
+        "    }\n"
+        "    void onCollisionExit(GameObject*, Collider*, Collider*) override {\n"
+        "        pasos += 30;\n"
+        "    }\n"
         "    void onStop(GameObject* owner) override { (void)owner; vidas = -1; }\n"
         "\n"
         "    std::vector<::ReflejoScripts::DefCampo>\n"
@@ -127,10 +167,19 @@ static std::string fuenteScript(const std::string& clase) {
 
 static bool hayCompilador() {
     const char* cxx = std::getenv("FUNSHI_CXX");
-    const std::string cmd =
-        std::string(cxx && *cxx ? cxx : FUNSHI_CXX_COMPILER) +
-        " --version > /dev/null 2>&1";
-    return std::system(cmd.c_str()) == 0;
+    const std::string ruta = cxx && *cxx ? cxx : FUNSHI_CXX_COMPILER;
+    // Sondeo SIN shell (H-3 nivel 2): Proceso::ejecutar tira el output al
+    // dispositivo nulo de la plataforma (H-14: NUL / /dev/null — ahora
+    // abierto por el runner en vez de escrito por cmd.exe). El flag depende
+    // de la familia: g++/clang++ entienden --version; cl.exe usa /?, porque
+    // `cl --version` no existe y dejaba el test en skip. Con MSVC el test
+    // puede seguir: el entorno del toolset (INCLUDE/LIB/PATH) lo harvesta
+    // BackendCpp el mismo.
+    const std::string flag = CompilacionCpp::familiaCompilador() ==
+                                     CompilacionCpp::Familia::Msvc
+                                 ? "/?"
+                                 : "--version";
+    return SondeoToolchain::sondear(ruta, flag);
 }
 
 static void escribirFuente(const std::string& ruta,
@@ -146,7 +195,31 @@ static void tocarFuente(const std::string& ruta) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
+// Fija o quita una variable de entorno de forma portable: POSIX usa setenv /
+// unsetenv y Windows _putenv_s. El valor nullptr borra la variable.
+static void fijarVariable(const char* nombre, const char* valor) {
+#if defined(_WIN32)
+    _putenv_s(nombre, valor ? valor : "");
+#else
+    if (valor)
+        setenv(nombre, valor, 1);
+    else
+        unsetenv(nombre);
+#endif
+}
+
 int main() {
+    // El skip es por FAMILIA de toolchain, no por SO (H-14): con MSVC el
+    // compilador necesita el entorno de Visual Studio (vcvars: INCLUDE, LIB,
+    // link.exe), asi que desde un shell normal no hay forma de correrlo. Con
+    // GCC/Clang el test corre en cualquier plataforma, Windows incluido
+    // (MinGW): la familia decide los flags, no el sistema operativo.
+    if (CompilacionCpp::familiaCompilador() == CompilacionCpp::Familia::Msvc) {
+        std::cout << "scripts-runtime-tests: SKIP (toolchain MSVC: requiere "
+                     "el entorno de Visual Studio)."
+                  << std::endl;
+        return 77;
+    }
     if (!hayCompilador()) {
         std::cout << "scripts-runtime-tests: SKIP (no hay compilador C++)."
                   << std::endl;
@@ -207,6 +280,22 @@ int main() {
             if (v.nombre == "pasos")
                 CHECK(v.como<int>() == 102, "onStart(100)+2x onUpdate(+1) = pasos 102");
         }
+        ScriptRuntime::llamarContacto(comportamiento, nullptr, nullptr, nullptr,
+                                      TipoContacto::Inicio);
+        valores = extraerCampos(comportamiento);
+        for (const auto& v : valores)
+            if (v.nombre == "pasos")
+                CHECK(v.como<int>() == 112,
+                      "el callback de inicio de contacto llega al script C++");
+        ScriptRuntime::llamarContacto(comportamiento, nullptr, nullptr, nullptr,
+                                      TipoContacto::Persistencia);
+        ScriptRuntime::llamarContacto(comportamiento, nullptr, nullptr, nullptr,
+                                      TipoContacto::Fin);
+        valores = extraerCampos(comportamiento);
+        for (const auto& v : valores)
+            if (v.nombre == "pasos")
+                CHECK(v.como<int>() == 162,
+                      "los callbacks de persistencia y fin llegan al script C++");
         ScriptRuntime::llamarDetener(comportamiento, nullptr);
         valores = extraerCampos(comportamiento);
         for (const auto& v : valores) {
@@ -215,7 +304,125 @@ int main() {
         }
     }
 
-    // 5. Hot reload: reescribir el fuente agregando un campo nuevo y tocando
+    // Una excepción de código de usuario queda atrapada en la frontera del
+    // backend, se publica una vez y bloquea callbacks posteriores.
+    {
+        const std::string fuenteFalla = (dir / "ScriptFalla.cpp").string();
+        std::string contenido = fuenteScript("ScriptFalla");
+        const std::string include = "#include \"Behaviour/IScriptBehaviour.h\"\n";
+        contenido.insert(include.size(), "#include <stdexcept>\n");
+        const std::string inicial = "pasos = 100;";
+        const size_t posicion = contenido.find(inicial);
+        if (posicion != std::string::npos)
+            contenido.replace(posicion, inicial.size(),
+                              "throw std::runtime_error(\"fallo callback\");");
+        escribirFuente(fuenteFalla, contenido);
+        ComportamientoCargado falla;
+        std::string errorFalla;
+        const bool cargada = ScriptRuntime::compilarYCargar(
+            fuenteFalla, "ScriptFalla", falla, errorFalla);
+        CHECK(cargada, "se carga el script que arroja desde onStart");
+        if (cargada) {
+            ScriptRuntime::llamarInicio(falla, nullptr);
+            CHECK(falla.falloRuntime && falla.callbackFallido == "onStart" &&
+                      falla.errorRuntime.find("fallo callback") !=
+                          std::string::npos,
+                  "la excepción estándar deja el fallo runtime en el callback");
+            const auto eventos = RegistroDiagnosticos::global().ultimos(20);
+            CHECK(!eventos.empty() &&
+                      eventos.back().tipoExcepcion == "SCRIPT_CALLBACK_FAILED" &&
+                      eventos.back().mensaje.find(fuenteFalla) !=
+                          std::string::npos,
+                  "la excepción del callback se publica con ruta y tipo");
+            ScriptRuntime::llamarActualizar(falla, nullptr, 0.016f);
+            CHECK(falla.falloRuntime && falla.callbackFallido == "onStart",
+                  "el callback latched no vuelve a invocarse");
+            ScriptRuntime::descargar(falla, nullptr);
+        }
+    }
+
+    {
+        const std::string fuenteFalla = (dir / "ScriptFallaNoEstandar.cpp").string();
+        std::string contenido = fuenteScript("ScriptFallaNoEstandar");
+        const std::string include = "#include \"Behaviour/IScriptBehaviour.h\"\n";
+        contenido.insert(include.size(), "#include <stdexcept>\n");
+        const std::string inicial = "pasos = 100;";
+        const size_t posicion = contenido.find(inicial);
+        if (posicion != std::string::npos)
+            contenido.replace(posicion, inicial.size(), "throw 17;");
+        escribirFuente(fuenteFalla, contenido);
+        ComportamientoCargado falla;
+        std::string errorFalla;
+        const bool cargada = ScriptRuntime::compilarYCargar(
+            fuenteFalla, "ScriptFallaNoEstandar", falla, errorFalla);
+        CHECK(cargada, "se carga el script que arroja una excepción no estándar");
+        if (cargada) {
+            ScriptRuntime::llamarInicio(falla, nullptr);
+            CHECK(falla.falloRuntime && falla.errorRuntime ==
+                      "excepcion C++ no estandar",
+                  "la excepción no estándar queda contenida en BackendCpp");
+            ScriptRuntime::descargar(falla, nullptr);
+        }
+    }
+
+    // 5. Segundo componente sobre el MISMO fuente: la cola de compilacion de
+    //    la escena lo entrega con un ComportamientoCargado vacio (estado por
+    //    componente), mientras el primero sigue cargado en este proceso. El
+    //    artefacto ya esta al dia, asi que no hay que volver a enlazarlo:
+    //    reescribir una imagen que esta cargada es un error de escritura que
+    //    el enlazador reporta como permiso denegado.
+    if (comportamiento.valido()) {
+        std::error_code ecArtefacto;
+        const auto mtimeAntes =
+            fs::last_write_time(comportamiento.artefacto, ecArtefacto);
+        CHECK(!ecArtefacto, "el artefacto del primer componente existe");
+
+        const std::string claveCacheAnterior =
+            fs::weakly_canonical(fuente).string() + "|" +
+            BackendCpp::compiladorRuta() + "|" +
+            CompilacionCpp::flagsCompilador(std::string());
+        const fs::path artefactoCacheAnterior =
+            fs::path(BackendCpp::cacheDir()) /
+            ("script_" +
+             std::to_string(std::hash<std::string>{}(claveCacheAnterior)) +
+             fs::path(comportamiento.artefacto).extension().string());
+        CHECK(artefactoCacheAnterior.string() != comportamiento.artefacto,
+              "la clave actual del cache no coincide con la version sin API");
+        if (artefactoCacheAnterior.string() != comportamiento.artefacto) {
+            std::error_code ecCopia;
+            fs::copy_file(comportamiento.artefacto, artefactoCacheAnterior,
+                          fs::copy_options::overwrite_existing, ecCopia);
+            CHECK(!ecCopia,
+                  "se puede preparar un artefacto de cache sin version API");
+            if (!ecCopia)
+                fs::last_write_time(
+                    artefactoCacheAnterior,
+                    fs::file_time_type::clock::now() +
+                        std::chrono::hours(1),
+                    ecCopia);
+        }
+
+        ComportamientoCargado segundo;
+        std::string errorSegundo;
+        const bool okSegundo = ScriptRuntime::compilarYCargar(
+            fuente, clase, segundo, errorSegundo);
+        CHECK(okSegundo, "segundo componente sobre el mismo fuente carga bien");
+        if (!okSegundo)
+            std::cout << "  Error del backend: " << errorSegundo << std::endl;
+        CHECK(segundo.valido(), "segundo comportamiento valido");
+        CHECK(segundo.artefacto != artefactoCacheAnterior.string(),
+              "un binario del cache anterior no se carga aunque este vigente");
+        if (!ecArtefacto) {
+            std::error_code ecDespues;
+            const auto mtimeDespues =
+                fs::last_write_time(comportamiento.artefacto, ecDespues);
+            CHECK(!ecDespues && mtimeDespues == mtimeAntes,
+                  "el artefacto no se volvio a escribir (sigue al dia)");
+        }
+        ScriptRuntime::descargar(segundo, nullptr);
+    }
+
+    // 6. Hot reload: reescribir el fuente agregando un campo nuevo y tocando
     // el mtime; descargar y recargar. Los valores conocidos se conservan.
     if (comportamiento.valido()) {
         std::string fuente2 =
@@ -272,11 +479,31 @@ int main() {
         }
     }
 
-    // 6. Limpieza.
+    // 7. Cabeceras del motor ausentes: el backend avisa con su propio mensaje
+    //    en vez de lanzar el compilador contra un -I a una ruta inexistente
+    //    (que solo daria el "No such file or directory" del toolchain).
+    {
+        const std::string fuenteSinCabeceras =
+            (dir / "SinCabeceras.cpp").string();
+        escribirFuente(fuenteSinCabeceras, fuenteScript("SinCabeceras"));
+        const std::string rutaMuerta = (dir / "no_existe").string();
+        fijarVariable("FUNSHI_SRC_DIR", rutaMuerta.c_str());
+        ComportamientoCargado sinCabeceras;
+        std::string errorCabeceras;
+        const bool okSin = ScriptRuntime::compilarYCargar(
+            fuenteSinCabeceras, "SinCabeceras", sinCabeceras, errorCabeceras);
+        fijarVariable("FUNSHI_SRC_DIR", nullptr);
+        CHECK(!okSin, "sin cabeceras del motor no se compila el script");
+        CHECK(!sinCabeceras.valido(), "no queda comportamiento cargado");
+        CHECK(errorCabeceras.find("cabeceras") != std::string::npos,
+              "el aviso es del motor (habla de las cabeceras), no del "
+              "compilador");
+    }
+
+    // 8. Limpieza.
     fs::remove_all(dir, ec);
 
     std::cout << "ScriptsRuntime: " << total << " verificaciones, " << fallos
               << " fallos" << std::endl;
     return fallos == 0 ? 0 : 1;
 }
-#endif

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,15 +20,19 @@
 #define SETTINGSTRANSFORM_H
 #include "../SettingsComponent.h"
 #include "../../../Objetos/Componentes/Transform.h"
+#include "../../../Configuracion/DimensionProyecto.h"
 
 class GameObject;
 
 class SettingsTransform : public SettingsComponent {
 	Transform* componentTransform;
 	GameObject* ownerObject;
+	// Dimension del proyecto: en 2D la rotacion se limita al eje Z (el plano).
+	DimensionProyecto dimension_ = DimensionProyecto::TresD;
 public:
-	SettingsTransform(Transform* componentTransform, GameObject* ownerObject = nullptr);
+	explicit SettingsTransform(Transform* componentTransform, GameObject* ownerObject = nullptr);
+	void setDimension(DimensionProyecto dimension) noexcept { dimension_ = dimension; }
 	virtual void showDataComponent() override;
-	virtual Component* getComponent();
+	virtual Component* getComponent() override { return componentTransform; }
 };
 #endif

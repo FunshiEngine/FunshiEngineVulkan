@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,11 +19,21 @@
 #include "AssimpMeshLoader.h"
 
 #include <assimp/Importer.hpp>
+#include <assimp/cimport.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
 #include "AssetException.h"
 #include "AssetPath.h"
+
+bool AssimpMeshLoader::puedeLeerFormato(const std::string& path) {
+    const std::string ext = AssetPath::extension(path);
+    if (ext.empty()) return false;
+    // aiIsExtensionSupported consulta los importers registrados en Assimp, asi
+    // que acepta todo lo que la version enlazada sabe importar sin duplicar
+    // una lista de extensiones aca.
+    return aiIsExtensionSupported(("." + ext).c_str()) == AI_TRUE;
+}
 
 std::shared_ptr<Mesh> AssimpMeshLoader::load(const std::string& path) {
     Assimp::Importer importer;

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,8 +85,11 @@ protected:
     virtual void deserializeEntity() = 0;
 
 public:
-    virtual void saveEntity(std::string filename) = 0;
-    virtual void loadEntity(std::string filename) = 0;
+    // Devuelven false si el archivo binario no se pudo abrir (sin directorio,
+    // sin permisos): quien llama (SceneSerializer) lo avisa en el log en vez de
+    // dejar que cada write()/read() falle en silencio.
+    virtual bool saveEntity(std::string filename) = 0;
+    virtual bool loadEntity(std::string filename) = 0;
     virtual Transform* getGlobalTransform() = 0;
 };
 

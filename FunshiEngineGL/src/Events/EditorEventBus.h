@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,7 @@ class GameObject;
 // lo que produce; ninguna se pasa un puntero a otra (patron Mediator/Observer
 // que el proyecto ya usa de forma puntual, ahora declarado para todas las GUI).
 //
-// Headless (sin ImGui/OpenGL): igual de testeable que EditorConfig y que el
+// Headless (sin ImGui ni pila grafica): igual de testeable que EditorConfig y que el
 // orquestador de estados. El dueño del bus es GUIManager (su registro central
 // de ventanas); menu, escena y main publican/suscriben sin conocerse.
 enum class EditorEventType {
@@ -48,7 +48,6 @@ enum class EditorEventType {
     ReiniciarConfiguracion, // "Restablecer configuracion" -> main reaplica defaults
     VentanaActivaCambio,  // reservado: ventana con foco ImGui (Settings futuro)
     ArchivosReubicados,   // archivo/carpeta movido o renombrado en el explorador -> Reescribir referencias
-    ExportarJuego,        // solicitud de exportar el proyecto (main copia carpeta)
 };
 
 // Datos declarativos segun el tipo (punteros NO propietarios; cadenas por
@@ -87,10 +86,6 @@ struct EditorEvent {
     // reescribe las referencias de la escena que cayan bajo rutaAnterior.
     std::string rutaAnterior;
     std::string rutaNueva;
-
-    // Para ExportarJuego: mensaje de resultado (exito/error) para feedback
-    // visual (status bar / toast).
-    std::string mensaje;
 };
 
 // Bus pub/sub 1:1 con el patron de EventBus (SceneEvent) pero con EditorEvent.

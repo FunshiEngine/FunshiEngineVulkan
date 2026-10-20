@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +46,12 @@ public:
 	// objeto. Los componentes lo usan para aplicar su estado al dueno sin que
 	// el GameObejct tenga que despachar por nombre de tipo.
 	virtual void onLoaded(GameObject& /*owner*/) {}
+
+	// Hook polimorico por frame, invocado desde GameObject::update. Por defecto
+	// no hace nada; los componentes con comportamiento en tiempo de ejecucion
+	// (animaciones, temporizadores) lo sobrescriben. El dueno se pasa para que
+	// el componente lea/escriba componentes hermanos sin acoplarse a su tipo.
+	virtual void onUpdate(GameObject& /*owner*/, float /*deltaTime*/) {}
 
 };
 #endif

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,16 +20,102 @@
 #include "EditorInput.h"
 
 #include <cmath>
+#include <iostream>
+#include <string>
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include "../Scenes/GameScene.h"
+#include "../Objetos/GameObject.h"
 #include "../Objetos/Componentes/CameraComponent.h"
 #include "../States/ApplicationStateMachine.h"
 #include "../States/OrquestadorEstadoGUI.h"
 #include "ImGuizmo.h"
 #include "../Scenes/EditorController.h"
+#include "../Scenes/SceneRegistry.h"
+#include "../Comandos/BorrarObjetoComando.h"
+#include "AtajosEditor.h"
+
+// Trazas de captura de teclado del editor.
+//
+// Las teclas del editor (E, Escape, el movimiento WASD y la guia de eje) se
+// ceden mientras ImGui tenga el teclado, y ese flag se prende por tres
+// motivos distintos: un campo de texto en edicion, cualquier otro widget con
+// el foco o un popup modal abierto. Solo el primero es una cesion intencional,
+// pero los tres apagan las mismas teclas. El log registra cual de ellos sostiene
+// la captura cada vez que cambia, y por que una tecla del editor quedo sin
+// efecto: es el unico lado del descarte que no se ve en la pantalla.
+namespace {
+
+std::string motivoCapturaDeTeclado() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::GetTopMostPopupModal() != nullptr) {
+        return std::string("popup modal ") + ImGui::GetTopMostPopupModal()->Name;
+    }
+    if (io.WantTextInput) {
+        ImGuiWindow* ventana = ImGui::GetCurrentContext()->ActiveIdWindow;
+        return std::string("campo de texto en edicion en ") +
+               (ventana ? ventana->Name : "(ventana desconocida)");
+    }
+    if (ImGui::IsAnyItemActive()) {
+        ImGuiWindow* ventana = ImGui::GetCurrentContext()->ActiveIdWindow;
+        return std::string("widget activo en ") +
+               (ventana ? ventana->Name : "(ventana desconocida)");
+    }
+    return "sin captura";
+}
+
+// Estado de la maquina de aplicacion junto a la captura: varias teclas del
+// editor se ceden segun el estado (menu, edicion o play), asi que la cronologia
+// del log sirve poco si no dice en que estado estaba la aplicacion cuando algo
+// se descarto.
+std::string nombreDeEstado(const ApplicationStateMachine* appState) {
+    if (!appState) return "desconocido";
+    if (appState->is(ApplicationState::MainMenu)) return "menu";
+    if (appState->is(ApplicationState::Editing)) return "edicion";
+    if (appState->is(ApplicationState::Debugging)) return "depuracion";
+    if (appState->is(ApplicationState::Playing)) return "juego";
+    return "salida";
+}
+
+void trazarCapturaDeTeclado(const ApplicationStateMachine* appState) {
+    static std::string firmaAnterior;
+    static bool capturaAnterior = false;
+    static double ultimoRegistro = -1.0;
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const std::string firma =
+        std::string(io.WantCaptureKeyboard ? "prendida" : "apagada") +
+        "; motivo: " + motivoCapturaDeTeclado() +
+        "; estado: " + nombreDeEstado(appState);
+
+    const bool cambioDeCaptura = io.WantCaptureKeyboard != capturaAnterior;
+    if (firma == firmaAnterior && !cambioDeCaptura) return;
+
+    // Con la bandera prendida, un motivo que solo parpadea (un widget que entra
+    // y sale cada frame) llenaria el log: ese cambio se registra como maximo
+    // una vez por cuarto de segundo. El encendido/apagado de la bandera en si
+    // siempre se registra, que es el evento que ordena la cronologia.
+    const double ahora = glfwGetTime();
+    if (!cambioDeCaptura && ultimoRegistro >= 0.0 &&
+        ahora - ultimoRegistro < 0.25) {
+        return;
+    }
+
+    capturaAnterior = io.WantCaptureKeyboard;
+    ultimoRegistro = ahora;
+    firmaAnterior = firma;
+    std::cout << "[input] captura de teclado " << firma << std::endl;
+}
+
+void trazarTeclaDescartada(const char* tecla, const std::string& motivo) {
+    std::cout << "[input] tecla " << tecla << " descartada: " << motivo
+              << std::endl;
+}
+
+} // namespace
 
 EditorInput* EditorInput::instancia = nullptr;
 
@@ -65,11 +151,32 @@ void EditorInput::scroll_callback(GLFWwindow* window, double xoffset,
     if (instancia) instancia->onScroll(window, xoffset, yoffset);
 }
 
+// La regla "editor o play" la decide el orquestador; aca solo se consulta para
+// que ninguna puerta de teclado repita la condicion por su cuenta. Sin
+// orquestador (construccion incompleta) se cae al estado de edicion.
+bool EditorInput::dentroDelEditor() const noexcept {
+    if (orquestador) return orquestador->dentroDelEditor();
+    return appState && appState->is(ApplicationState::Editing);
+}
+
+bool EditorInput::modoJuegoActivo() const noexcept {
+    return orquestador && orquestador->enModoJuego();
+}
+
 void EditorInput::aplicarModoCursor(GLFWwindow* window) {
     if (!window || !scene || !appState) return;
-    const bool enEditor = appState->is(ApplicationState::Editing);
-    const bool ocultar =
-        enEditor && (mouseDerechoParaNavegar || !scene->isEditorActivo());
+    const bool juego = modoJuegoActivo();
+    const bool enEditor = dentroDelEditor();
+    if (juego || !enEditor) {
+        mouseDerechoParaNavegar = false;
+        orbitando = false;
+        cursorOcultoPorC = false;
+        limpiarMovimientoCamara();
+    }
+    const bool interfazVisible = scene->isEditorActivo();
+    const bool ocultar = !juego && enEditor &&
+                         (mouseDerechoParaNavegar ||
+                          (!interfazVisible && cursorOcultoPorC));
     const int modo = ocultar ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
     if (glfwGetInputMode(window, GLFW_CURSOR) != modo) {
         glfwSetInputMode(window, GLFW_CURSOR, modo);
@@ -79,6 +186,15 @@ void EditorInput::aplicarModoCursor(GLFWwindow* window) {
         firstTimeMouseX = true;
         firstTimeMouseY = true;
     }
+}
+
+void EditorInput::limpiarMovimientoCamara() noexcept {
+    teclaAdelante = false;
+    teclaAtras = false;
+    teclaIzquierda = false;
+    teclaDerecha = false;
+    teclaArriba = false;
+    teclaAbajo = false;
 }
 
 void EditorInput::descartarDeltaLook() {
@@ -91,11 +207,30 @@ void EditorInput::setAccionGuardar(std::function<void()> accion) {
 }
 
 void EditorInput::aplicarMovimiento(float deltaTime) {
-    // La camara del editor solo se mueve con WASD/Espacio/Shift dentro del
-    // editor (ni en el menu ni cuando ImGui esta capturando el teclado, p. ej.
-    // mientras se edita un InputText).
-    if (!scene || !appState || !appState->is(ApplicationState::Editing)) return;
-    if (ImGui::GetIO().WantCaptureKeyboard) return;
+    // Traza del estado de captura: corre antes de cualquier guard para que el
+    // log ordene el momento en que la captura se prendio, tambien en los
+    // estados donde el movimiento ni se evalua.
+    trazarCapturaDeTeclado(appState);
+
+    // La camara libre pertenece al editor; Juego no debe modificar la escena
+    // mediante los controles de navegacion del editor.
+    if (!scene || !appState || !dentroDelEditor() || modoJuegoActivo()) return;
+    static bool avisoDeCaptura = false;
+    if (ImGui::GetIO().WantCaptureKeyboard) {
+        // Un aviso por episodio de captura, no por frame: el registro que
+        // sostiene la traza es el de encendido/apagado de la bandera.
+        const bool hayMovimiento = teclaAdelante || teclaAtras ||
+                                   teclaIzquierda || teclaDerecha ||
+                                   teclaArriba || teclaAbajo;
+        if (hayMovimiento && !avisoDeCaptura) {
+            avisoDeCaptura = true;
+            trazarTeclaDescartada("WASD",
+                                  std::string("ImGui tiene el teclado (") +
+                                      motivoCapturaDeTeclado() + ")");
+        }
+        return;
+    }
+    avisoDeCaptura = false;
     // Durante orbita (editor oculto + clic derecho): bloquear traslacion WASD.
     if (orbitando) return;
     // Misma regla que la mirada (EditorInput::onMouse): con las interfaces del
@@ -135,6 +270,7 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
                         int mods) {
     (void)scancode;
     (void)mods;
+    if (scene) scene->registrarTeclaScript(key, action);
 
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
         // Volver al menu de inicio desde el editor: la maquina de estados es
@@ -142,30 +278,58 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
         if (ImGui::GetIO().WantCaptureKeyboard) {
             // Un InputText de ImGui esta activo: Escape revierte el texto en
             // edicion y no corta la edicion de datos del editor.
-        } else if (appState && appState->is(ApplicationState::Editing)) {
-            // La regla vive en el orquestador de estados de GUI.
-            orquestador->manejarTeclaEscape();
+            trazarTeclaDescartada("Escape",
+                                  std::string("ImGui tiene el teclado (") +
+                                      motivoCapturaDeTeclado() + ")");
+        } else if (dentroDelEditor()) {
+            // La regla vive en el orquestador de estados de GUI: en el editor
+            // vuelve al menu y durante el play detiene la simulacion y deja el
+            // editor (el menu queda para el Escape siguiente). El reflejo sobre
+            // la escena (start y pausa) lo hace main en el bucle, igual que con
+            // F5/F6/F7 y con los controles del menu.
+            if (orquestador) orquestador->manejarTeclaEscape();
+        } else {
+            trazarTeclaDescartada("Escape",
+                                  "la aplicacion no esta en edicion");
         }
+        aplicarModoCursor(window);
+        return;
+    }
+
+    if (key == GLFW_KEY_C && action == GLFW_PRESS && dentroDelEditor() &&
+        scene && !scene->isEditorActivo() && !modoJuegoActivo() &&
+        !ImGui::GetIO().WantCaptureKeyboard) {
+        cursorOcultoPorC = !cursorOcultoPorC;
+        mouseDerechoParaNavegar = false;
+        orbitando = false;
+        limpiarMovimientoCamara();
         aplicarModoCursor(window);
         return;
     }
 
     // Ctrl+S: guardado en caliente del proyecto (misma rutina que el guardado
     // al salir, inyectada por main). Se intercepta ANTES de la maquina de
-    // movimiento para que el "S" con Ctrl no mueva la camara hacia atras, y
-    // con el mismo guard que Escape: si un campo de texto de ImGui esta
-    // capturando el teclado, la combinacion es del editor de texto.
+    // movimiento para que el "S" con Ctrl no mueva la camara hacia atras.
+    // Guarda SIEMPRE, tambien con un InputText enfocado: el atajo no le quita
+    // nada al campo, y con el guard anterior (el mismo que Escape) renombrar un
+    // objeto y guardar sin salir del campo perdia el nombre en silencio. La
+    // decision vive en AtajosEditor.h, con su test.
     if (key == GLFW_KEY_S && (mods & GLFW_MOD_CONTROL) && action == GLFW_PRESS) {
-        if (accionGuardar && !ImGui::GetIO().WantCaptureKeyboard) accionGuardar();
+        if (accionGuardar &&
+            (!orquestador || !orquestador->enModoJuego()) &&
+            AtajosEditor::debeGuardar(ImGui::GetIO().WantCaptureKeyboard))
+            accionGuardar();
         return;
     }
 
     // Ctrl+Z: deshacer (undo). Se avisa en la barra de estado que cambio tomo
     // el estado (mismo aviso momentaneo que Ctrl+S), o que no hay nada que
-    // deshacer, para que el atajo nunca sea silencioso.
+    // deshacer, para que el atajo nunca sea silencioso. Con un campo de texto
+    // enfocado el editor cede la tecla: ahi Ctrl+Z es el deshacer del campo.
     if (key == GLFW_KEY_Z && (mods & GLFW_MOD_CONTROL) &&
         !(mods & GLFW_MOD_SHIFT) && action == GLFW_PRESS) {
-        if (scene && !ImGui::GetIO().WantCaptureKeyboard) {
+        if (scene && (!orquestador || !orquestador->enModoJuego()) &&
+            !AtajosEditor::cedeAlCampoDeTexto(ImGui::GetIO().WantCaptureKeyboard)) {
             if (auto* ec = scene->getEditorController()) {
                 const std::string descripcion = ec->deshacer();
                 scene->mostrarMensaje(descripcion.empty()
@@ -179,9 +343,11 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
     // Ctrl+Y: rehacer (redo). Es el UNICO atajo de redo: la "Y" con Ctrl deja de
     // ser el atajo de escala del gizmo (3/U) y no se solapa con ningun otro.
     // La "Y" suelta la tomo la guia de eje (X/Y/Z), que necesita las tres
-    // letras libres para dibujar la recta del eje pulsado.
+    // letras libres para dibujar la recta del eje pulsado. Como Ctrl+Z, cede la
+    // tecla al campo de texto (que tiene su propio rehacer).
     if (key == GLFW_KEY_Y && (mods & GLFW_MOD_CONTROL) && action == GLFW_PRESS) {
-        if (scene && !ImGui::GetIO().WantCaptureKeyboard) {
+        if (scene && (!orquestador || !orquestador->enModoJuego()) &&
+            !AtajosEditor::cedeAlCampoDeTexto(ImGui::GetIO().WantCaptureKeyboard)) {
             if (auto* ec = scene->getEditorController()) {
                 const std::string descripcion = ec->rehacer();
                 scene->mostrarMensaje(descripcion.empty()
@@ -192,29 +358,50 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
         return;
     }
 
-    // F5/F6/F7: teclas de funcion de la simulacion (Play/Pausa/Stop). La regla
+    // Ctrl+D: borrado rapido del seleccionado, sin dialogo de confirmacion.
+    // Va por el gestor (BorrarObjetoComando): Ctrl+Z lo recupera. Como
+    // Ctrl+Z/Y, cede ante un campo de texto (ahi la tecla es del campo) y no
+    // corre en Juego. La raiz no se borra por diseno.
+    if (key == GLFW_KEY_D && (mods & GLFW_MOD_CONTROL) &&
+        action == GLFW_PRESS) {
+        if (scene && (!orquestador || !orquestador->enModoJuego()) &&
+            !AtajosEditor::cedeAlCampoDeTexto(ImGui::GetIO().WantCaptureKeyboard)) {
+            if (auto* ec = scene->getEditorController()) {
+                GameObject* seleccionado = ec->getSelectedObject();
+                SceneRegistry* registro = ec->getScene();
+                if (seleccionado && registro &&
+                    seleccionado != registro->getRoot()) {
+                    const std::string nombre = seleccionado->inputName;
+                    ec->getGestorComandos()->ejecutar(
+                        std::make_unique<BorrarObjetoComando>(
+                            ec, seleccionado, registro));
+                    scene->mostrarMensaje("Eliminar: " + nombre +
+                                          " (Ctrl+Z para deshacer)");
+                } else {
+                    scene->mostrarMensaje("Nada que borrar");
+                }
+            }
+        }
+        return;
+    }
+
+    // F5/F6/F7: teclas de funcion de la simulacion (Depuracion/Pausa/Stop). La regla
     // por estado vive en el orquestador (funcion de marco de la arquitectura,
-    // igual que Escape); aca solo se reenvia el evento y se refleja la decision
-    // sobre GameScene::start (el mismo flag que maneja el boton Activar/Detener
-    // del menu de escena, asi ambas puertas comparten estado). F5 y F7 salen
-    // entran de nav libre, por eso se recalcula tambien el modo del cursor.
+    // igual que Escape) y los controles del menu usan las mismas transiciones.
+    // Aca solo se reenvia el evento: el reflejo de la decision sobre
+    // GameScene::start y la pausa lo hace
+    // main en el bucle, para que ninguna puerta escriba ese estado por su cuenta.
+    // F5 y F7 salen/entran de nav libre, por eso se recalcula tambien el modo
+    // del cursor.
     if ((key == GLFW_KEY_F5 || key == GLFW_KEY_F6 || key == GLFW_KEY_F7) &&
         action == GLFW_PRESS) {
         if (orquestador) {
             const auto tecla = key == GLFW_KEY_F5
-                                   ? OrquestadorEstadoGUI::TeclaSimulacion::Play
+                                   ? OrquestadorEstadoGUI::TeclaSimulacion::Depuracion
                                    : key == GLFW_KEY_F6
                                          ? OrquestadorEstadoGUI::TeclaSimulacion::Pausa
                                          : OrquestadorEstadoGUI::TeclaSimulacion::Stop;
             orquestador->manejarTeclaSimulacion(tecla);
-            // Refleja Playing/Editing sobre la simulacion de la escena (F5
-            // arranca, F7 corta; F5 con la maquina ya en Playing re-asegura el
-            // arranque despues de un "Detener" con el boton del menu de escena).
-            if (scene) scene->setStart(orquestador->enSimulacion());
-            // La pausa (F6) tambien se refleja: congela fisica/scripts sin
-            // tocar `start` (asi no se dispara la limpieza de play->editor).
-            if (scene)
-                scene->setSimulacionPausada(orquestador->simulacionPausada());
             aplicarModoCursor(window);
         }
         return;
@@ -225,18 +412,20 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
     // fijadas a las suyas) para marcar sobre que eje se puede mover, y la guia
     // se apaga con el gizmo mientras esta activa. Como las teclas son de un
     // caracter ("Y" suelta, "Z" suelta), se exigen las mismas guardas que E y
-    // los atajos del gizmo: solo en edicion, sin editor oculto y con el
-    // teclado libre de ImGui. Ctrl queda excluido (Ctrl+Y = rehacer,
-    // Ctrl+Z = deshacer) y el estado vive en EditorController, que lo comparte
-    // con el gizmo y el renderer.
+    // los atajos del gizmo: dentro del editor (tambien durante el play), sin
+    // editor oculto y con el teclado libre de ImGui. Ctrl queda excluido
+    // (Ctrl+Y = rehacer, Ctrl+Z = deshacer) y el estado vive en
+    // EditorController, que lo comparte con el gizmo y el renderer.
     if (action == GLFW_PRESS && !(mods & GLFW_MOD_CONTROL) && !ImGui::GetIO().WantCaptureKeyboard) {
         int eje = -1;
         if (key == GLFW_KEY_X) eje = 0;
         else if (key == GLFW_KEY_Y) eje = 1;
         else if (key == GLFW_KEY_Z) eje = 2;
         if (eje >= 0) {
-            if (appState && appState->is(ApplicationState::Editing) && scene &&
-                scene->isEditorActivo() && !orbitando) {
+            if (dentroDelEditor() && scene &&
+                (!orquestador || !orquestador->enModoJuego()) &&
+                scene->isEditorActivo() &&
+                !orbitando) {
                 scene->alternarGuiaEje(eje);
                 // Aviso momentaneo en la barra de estado (mismo mecanismo que el
                 // guardado y el undo): la guia se ve como una recta que cruza la
@@ -268,6 +457,68 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
             case GLFW_KEY_LEFT_SHIFT: teclaAbajo = true; break;
             default: break;
         }
+        // Ajustar radio de orbita con W/S durante orbita (editor oculto + clic derecho).
+        // W = disminuir radio (acercarse), S = aumentar radio (alejarse).
+        if (!modoJuegoActivo() && orbitando &&
+            (key == GLFW_KEY_W || key == GLFW_KEY_S)) {
+            const float factor = 1.01f;  // ~1% por pulsacion
+            float radioAnterior = radioOrbita;
+            if (key == GLFW_KEY_W) { // W = disminuir radio (acercarse)
+                radioOrbita /= factor;
+                if (radioOrbita < CameraComponent::radioMin) radioOrbita = CameraComponent::radioMin;
+            } else if (key == GLFW_KEY_S) { // S = aumentar radio (alejarse)
+                radioOrbita *= factor;
+                if (radioOrbita > CameraComponent::radioMax) radioOrbita = CameraComponent::radioMax;
+            }
+            // Desplazar camara sobre la recta del radio (mismo logico que onScroll).
+            if (CameraComponent* camara = scene ? scene->getActiveCamera() : nullptr) {
+                camara->refreshFromTransform();
+                const float* origen = origenOrbita;
+                const float radX = camara->getYawX() * (3.14159265358979f / 180.f);
+                float horizDir[3] = { std::sin(radX), 0.f, -std::cos(radX) };
+                float deltaRadio = radioOrbita - radioAnterior;
+                const float* pos = camara->getPosition();
+                float nuevaPos[3] = {
+                    pos[0] - horizDir[0] * deltaRadio,
+                    pos[1],
+                    pos[2] - horizDir[2] * deltaRadio
+                };
+                camara->setPosition(nuevaPos);
+                camara->escribirATransform();
+            }
+            return;
+        }
+    } else if (action == GLFW_REPEAT) {
+        // Auto-repeat: ajustar radio de orbita manteniendo W/S (solo durante orbita).
+        if (!modoJuegoActivo() && orbitando &&
+            (key == GLFW_KEY_W || key == GLFW_KEY_S)) {
+            const float factor = 1.01f;  // ~1% por repeticion
+            float radioAnterior = radioOrbita;
+            if (key == GLFW_KEY_W) { // W = disminuir radio (acercarse)
+                radioOrbita /= factor;
+                if (radioOrbita < CameraComponent::radioMin) radioOrbita = CameraComponent::radioMin;
+            } else if (key == GLFW_KEY_S) { // S = aumentar radio (alejarse)
+                radioOrbita *= factor;
+                if (radioOrbita > CameraComponent::radioMax) radioOrbita = CameraComponent::radioMax;
+            }
+            // Desplazar camara sobre la recta del radio (mismo logico que onScroll).
+            if (CameraComponent* camara = scene ? scene->getActiveCamera() : nullptr) {
+                camara->refreshFromTransform();
+                const float* origen = origenOrbita;
+                const float radX = camara->getYawX() * (3.14159265358979f / 180.f);
+                float horizDir[3] = { std::sin(radX), 0.f, -std::cos(radX) };
+                float deltaRadio = radioOrbita - radioAnterior;
+                const float* pos = camara->getPosition();
+                float nuevaPos[3] = {
+                    pos[0] - horizDir[0] * deltaRadio,
+                    pos[1],
+                    pos[2] - horizDir[2] * deltaRadio
+                };
+                camara->setPosition(nuevaPos);
+                camara->escribirATransform();
+            }
+            return;
+        }
     } else if (action == GLFW_RELEASE) {
         switch (key) {
             case GLFW_KEY_W: teclaAdelante = false; break;
@@ -283,22 +534,33 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
 
     if (key == GLFW_KEY_E && action == GLFW_PRESS) {
         // Durante orbita: bloquear toggle de editor (E).
-        if (orbitando) return;
-        // Solo en el estado de edicion: desde el menu de inicio la E no debe
+        if (orbitando) {
+            trazarTeclaDescartada("E", "en orbita");
+            return;
+        }
+        // Dentro del editor o del play: desde el menu de inicio la E no debe
         // "activar el editor" mostrando sus interfaces sobre el menu (fallo de
         // la maquina de estados). Con un InputText de ImGui activo, E tampoco
         // toca las interfaces.
-        if (appState && appState->is(ApplicationState::Editing) &&
-            !ImGui::GetIO().WantCaptureKeyboard) {
+        if (dentroDelEditor() && !ImGui::GetIO().WantCaptureKeyboard) {
             if (scene) scene->toggleEditorInterfaces();
-            // Entrar/salir de navegacion libre: captura y oculta el cursor.
+            cursorOcultoPorC = false;
+            mouseDerechoParaNavegar = false;
+            orbitando = false;
             aplicarModoCursor(window);
+        } else if (!dentroDelEditor()) {
+            trazarTeclaDescartada("E", "la aplicacion no esta en edicion");
+        } else {
+            trazarTeclaDescartada("E",
+                                  std::string("ImGui tiene el teclado (") +
+                                      motivoCapturaDeTeclado() + ")");
         }
     }
 
     // G: alterna el sistema de coordenadas del gizmo entre LOCAL (ejes que
     // rotan con el objeto) y GLOBAL (ejes del mundo, el gizmo no rota).
-    if (key == GLFW_KEY_G && action == GLFW_PRESS) {
+    if (key == GLFW_KEY_G && action == GLFW_PRESS &&
+        (!orquestador || !orquestador->enModoJuego())) {
         if (scene) scene->setGizmoGlobal(!scene->isGizmoGlobal());
     }
 
@@ -311,7 +573,8 @@ void EditorInput::onKey(GLFWwindow* window, int key, int scancode, int action,
     // rotar o escalar, o mover en los tres ejes, asi que el "solo este eje" ya
     // no aplica y dejarlo prendido lo dejaria escribiendo en un unico eje
     // mientras el gizmo muestra el otro (o ninguna flecha, si pidio escalar).
-    if (action == GLFW_PRESS && !(mods & GLFW_MOD_CONTROL)) {
+    if (action == GLFW_PRESS && !(mods & GLFW_MOD_CONTROL) &&
+        (!orquestador || !orquestador->enModoJuego())) {
         if (key == GLFW_KEY_1 || key == GLFW_KEY_T) {
             if (scene) {
                 scene->clearGuiaEje();
@@ -335,15 +598,29 @@ void EditorInput::onMouseButton(GLFWwindow* window, int button, int action,
                                 int mods) {
     (void)mods;
     if (button != GLFW_MOUSE_BUTTON_RIGHT) return;
+    if (modoJuegoActivo()) {
+        mouseDerechoParaNavegar = false;
+        orbitando = false;
+        aplicarModoCursor(window);
+        return;
+    }
     if (action == GLFW_PRESS) {
         ImGuiIO& io = ImGui::GetIO();
         const bool gizmoCapturing = scene && scene->isGizmoCapturingInput();
         const bool editorActivo = scene && scene->isEditorActivo();
+        const bool cursorYaCapturado =
+            glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+        const bool puedeUsarEscena =
+            (!editorActivo || !io.WantCaptureMouse) && !gizmoCapturing;
 
-        if (!editorActivo && !io.WantCaptureMouse && !gizmoCapturing) {
-            // Editor oculto (E presionado) + clic derecho sobre la escena:
-            // entrar en modo orbita. El origen esta en la recta de la direccion
-            // de la camara; el radio es la distancia horizontal actual camara-origen.
+        // En 2D la camara esta fija mirando el plano: la orbita (que rota la
+        // camara) no aplica, asi que el clic derecho no la inicia.
+        const bool es2D =
+            scene && scene->getDimensionProyecto() == DimensionProyecto::DosD;
+        if (!editorActivo && cursorOcultoPorC && cursorYaCapturado &&
+            puedeUsarEscena && !es2D) {
+            // Con la GUI oculta y el cursor capturado por C, el clic derecho
+            // inicia orbita alrededor del punto al que mira la camara.
             if (CameraComponent* camara = scene ? scene->getActiveCamera() : nullptr) {
                 camara->refreshFromTransform();
                 const float* pos = camara->getPosition();
@@ -361,8 +638,10 @@ void EditorInput::onMouseButton(GLFWwindow* window, int button, int action,
                 radioOrbita = std::sqrt(dx * dx + dz * dz);
                 orbitando = true;
             }
-        } else {
-            mouseDerechoParaNavegar = !io.WantCaptureMouse && !gizmoCapturing;
+        } else if (puedeUsarEscena) {
+            // Si el cursor estaba visible, el clic derecho lo captura mientras
+            // se navega, sin iniciar orbita.
+            mouseDerechoParaNavegar = true;
         }
     } else {
         mouseDerechoParaNavegar = false;
@@ -372,7 +651,16 @@ void EditorInput::onMouseButton(GLFWwindow* window, int button, int action,
 }
 
 void EditorInput::onMouse(GLFWwindow* window, double xpos, double ypos) {
-    (void)window;
+    if (modoJuegoActivo() ||
+        (window &&
+         glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)) {
+        if (scene) scene->registrarMouseScript(xpos, ypos);
+    }
+    if (modoJuegoActivo()) {
+        firstTimeMouseX = true;
+        firstTimeMouseY = true;
+        return;
+    }
     float dx;
     float dy;
     if (firstTimeMouseX) {
@@ -397,29 +685,29 @@ void EditorInput::onMouse(GLFWwindow* window, double xpos, double ypos) {
     ImGuiIO& io = ImGui::GetIO();
     const bool gizmoCapturing = scene && scene->isGizmoCapturingInput();
     const bool editorActivo = scene && scene->isEditorActivo();
-    // Tres caminos para rotar la camara:
-    //  (1) modo editor libre (sin E y sin objeto seleccionado), mirada con el
-    //      mouse suelto y sin ImGui capturando la escena;
-    //  (2) CLIC DERECHO sostenido sobre la escena desde el editor: permite
-    //      mira-se (y con WASD trasladarse) sin apretar E y SIN esconder las
-    //      interfaces. Una vez enganchado, se mantiene aunque el cursor pase
-    //      sobre un panel (los popups de ImGui necesitan clic nuevo).
-    //  (3) ORBITA: editor oculto (E) + clic derecho sostenido sobre la escena.
-    //      La camara gira alrededor de un punto origen en la direccion de mirada,
-    //      manteniendo radio fijo y mirando siempre hacia el origen.
+    // El mouse solo rota la camara cuando el cursor esta capturado o mientras
+    // se sostiene clic derecho. Con la GUI oculta, C captura el cursor para
+    // mirada libre; el clic derecho en ese estado activa orbita. Si el cursor
+    // estaba visible, el clic derecho solo permite mirar mientras se sostiene.
     const bool navegandoLibre =
-        !editorActivo && !io.WantCaptureMouse && !gizmoCapturing && !orbitando;
+        !editorActivo && cursorOcultoPorC &&
+        (!editorActivo || !io.WantCaptureMouse) && !gizmoCapturing &&
+        !orbitando;
     const bool navegandoConDerecho =
         mouseDerechoParaNavegar && !gizmoCapturing && !orbitando;
+    // En 2D la camara mira el plano y no rota: ni orbita ni yaw/pitch, para que
+    // los sprites queden siempre de frente. El desplazamiento (WASD) sigue vivo.
+    const bool es2D =
+        scene && scene->getDimensionProyecto() == DimensionProyecto::DosD;
 
-    if (orbitando && !gizmoCapturing) {
+    if (orbitando && !gizmoCapturing && !es2D) {
         if (CameraComponent* camara = scene ? scene->getActiveCamera() : nullptr) {
             const float sensibilidad =
                 scene ? scene->getSensibilidadCamara() : 1.0f;
             camara->orbitAround(origenOrbita, radioOrbita,
                                 dx * sensibilidad, dy * sensibilidad);
         }
-    } else if (navegandoLibre || navegandoConDerecho) {
+    } else if ((navegandoLibre || navegandoConDerecho) && !es2D) {
         if (CameraComponent* camara = scene ? scene->getActiveCamera() : nullptr) {
             const float sensibilidad =
                 scene ? scene->getSensibilidadCamara() : 1.0f;
@@ -431,6 +719,7 @@ void EditorInput::onMouse(GLFWwindow* window, double xpos, double ypos) {
 void EditorInput::onScroll(GLFWwindow* window, double xoffset, double yoffset) {
     (void)window;
     (void)xoffset;
+    if (modoJuegoActivo()) return;
     // Ajustar radio de orbita con la rueda del mouse solo durante orbita.
     // Invertido: rueda arriba (yoffset>0) = decrementa, abajo = incrementa.
     if (!orbitando) return;

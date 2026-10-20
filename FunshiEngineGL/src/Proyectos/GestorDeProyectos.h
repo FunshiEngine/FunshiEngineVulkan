@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,9 +73,10 @@ public:
     void guardarProyectoCompleto();
 
     // Orquesta el flujo del menu: si el usuario pidio renombrar una carpeta
-    // (click derecho -> Editar nombre) o elegir/crear un proyecto del listado,
-    // guarda el estado del activo, renombra en disco si corresponde y entra al
-    // nuevo destino. Consumo unico por frame (la fachada limpia su registro).
+    // (click derecho -> Editar nombre), elegir un proyecto del listado (Abrir)
+    // o crearlo (Crear), guarda el estado del activo, decide crear-vs-abrir
+    // segun exista la carpeta en disco, persiste la dimension de los proyectos
+    // nuevos y entra al destino. La intencion del menu se consume por frame.
     void sincronizarProyectoDesdeMenu();
 
     // Eliminacion confirmada desde el modal del menu: borra la carpeta y, si era
@@ -85,11 +86,6 @@ public:
     // Refleja en la barra de menu (Exportar) el proyecto activo. Sin proyecto,
     // no toca nada (el enunciado "no hay proyecto" queda vacio).
     void reflejarProyectoEnMenuBar() const;
-
-    // Copia el proyecto activo a <base>/Exportaciones para distribucion junto al
-    // ejecutable (FunshiEngineGL --proyecto <nombre>). Informa por la barra de
-    // estado el resultado.
-    void exportarProyecto();
 
     // Reescribe en memoria las referencias de la escena cuya ruta cayo bajo el
     // path movido (mallas/texturas/fuentes) y persiste al instante.

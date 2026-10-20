@@ -22,6 +22,8 @@ if (-not (Test-Path $exe)) {
 Copy-Item $exe $Dist
 Write-Host "  [ok] FunshiEngineGL.exe"
 
+
+
 # --- 2. DLLs de vcpkg (glfw3, assimp, bullet, zlib, ...) ---------------------
 $dllsCopiadas = 0
 if ($VcpkgInstalled) {
@@ -51,6 +53,26 @@ $imagenes = Join-Path $ProjectDir "Imagenes"
 if (-not (Test-Path $imagenes)) { Write-Error "Falta la carpeta Imagenes en $ProjectDir" }
 Copy-Item $imagenes "$Dist\Imagenes" -Recurse
 Write-Host "  [ok] Imagenes\ ($((Get-ChildItem (Join-Path $Dist 'Imagenes')).Count) archivos)"
+
+# --- 5. Cabeceras que necesitan los scripts C++ -----------------------------
+# El script incluye Behaviour/IScriptBehaviour.h, que arrastra ScriptGameObject.h,
+# Reflection/BehaviourReflection.h y Matematicas/StructVec3.h. El backend resuelve
+# la carpeta "include" junto al ejecutable, asi que sin estas cabeceras el
+# compilador falla al compilar un script en la app instalada.
+$cabeceras = @{
+    "Behaviour\IScriptBehaviour.h"               = "Behaviour"
+    "Behaviour\ScriptGameObject.h"               = "Behaviour"
+    "Behaviour\Reflection\BehaviourReflection.h" = "Behaviour\Reflection"
+    "Matematicas\StructVec3.h"                   = "Matematicas"
+}
+foreach ($rel in $cabeceras.Keys) {
+    $origen = Join-Path $ProjectDir "src\$rel"
+    if (-not (Test-Path $origen)) { Write-Error "Falta la cabecera $origen" }
+    $destino = Join-Path "$Dist\include" $cabeceras[$rel]
+    New-Item -ItemType Directory -Path $destino -Force | Out-Null
+    Copy-Item $origen $destino
+}
+Write-Host "  [ok] include\ ($($cabeceras.Count) cabeceras para scripts)"
 
 Write-Host ""
 Write-Host "  dist montado en: $Dist"

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 */
 #include "GUIManager.h"
 #include "../Configuracion/EditorConfig.h"
+#include "../Configuracion/ProjectPaths.h"
 #include "../Objetos/Modelos3D.h"
 #include "../Scenes/EditorController.h"
 #include "../Scenes/SceneRegistry.h"
@@ -46,11 +47,9 @@ GUIManager::GUIManager(GLFWwindow* window)
     dockSpaceGUI = std::make_unique<DockSpaceInterface>(true);
     iconosGUI = std::make_unique<IconosGUI>();
     iconosGUI->init();
+    menuBarGUI->setIconosGUI(iconosGUI.get());
     statusBarGUI = std::make_unique<StatusBarInterface>(true);
-    // Ventanas del creador de interfaces: arrancan ocultas; se alternan desde
-    // el menu "Ventanas" o al crear una interfaz (se persisten por proyecto).
-    creadorInterfacesGUI = std::make_unique<CreadorDeInterfaces>(false);
-    canvasGUI = std::make_unique<CanvasInterface>(false);
+    terminalGUI = std::make_unique<TerminalInterface>(true);
     treeFilesGUI->setIconosGUI(iconosGUI.get());
     contentOfThisFolder->setIconosGUI(iconosGUI.get());
     selecteableGUI->setIconosGUI(iconosGUI.get());
@@ -79,13 +78,15 @@ GUIManager::~GUIManager() {
 }
 
 void GUIManager::bindScene(SceneRegistry* scene, EditorController* editor,
-                           EventBus* events) {
+                           EventBus* events,
+                           std::function<DimensionProyecto()> dimensionProvider) {
     this->editor = editor;
     selecteableGUI->bindScene(scene, editor, events);
     statusBarGUI->bindScene(scene);
     settingGUI->setEditor(editor);
     settingGUI->setAudioEngine(audioMotor);
-    canvasGUI->setAudioEngine(audioMotor);
+    settingGUI->setEventBus(events);
+    if (dimensionProvider) settingGUI->setDimensionProvider(dimensionProvider);
 }
 MenuGUI* GUIManager::getMenuGUI() { return menuGUI.get(); }
 TreeFilesInterface* GUIManager::getTreeFilesGUI() { return treeFilesGUI.get(); }
@@ -124,7 +125,6 @@ DockSpaceInterface* GUIManager::getDockSpaceGUI() { return dockSpaceGUI.get(); }
 void GUIManager::setAudioEngine(AudioEngine* motor) {
     audioMotor = motor;
     if (settingGUI) settingGUI->setAudioEngine(motor);
-    if (canvasGUI) canvasGUI->setAudioEngine(motor);
 }
 
 StatusBarInterface* GUIManager::getStatusBarGUI() { return statusBarGUI.get(); }
@@ -142,7 +142,7 @@ std::vector<GeneralUserInterface*> GUIManager::ventanasPersistentes() const {
     // fuera. El resto se persiste por su WindowName.
     return {selecteableGUI.get(), menuBarGUI.get(), treeFilesGUI.get(),
             contentOfThisFolder.get(), dockSpaceGUI.get(), statusBarGUI.get(),
-            creadorInterfacesGUI.get(), canvasGUI.get()};
+            terminalGUI.get()};
 }
 
 std::map<std::string, bool> GUIManager::obtenerEstadosVentanas() const {
@@ -171,6 +171,9 @@ void GUIManager::configurarProyecto(const std::string& nombreProyecto) {
     EditorConfig::asegurarEstructuraProyecto(nombreProyecto);
     const std::string path = EditorConfig::directorioSrc(nombreProyecto);
     const std::string rootName = EditorConfig::nombreRaizSrc(nombreProyecto);
+    if (terminalGUI)
+        terminalGUI->setDirectorioProyecto(
+            ProjectPaths::directorioProyecto(nombreProyecto));
     if (fileManager) {
         fileManager->setProyecto(path, rootName);
     }

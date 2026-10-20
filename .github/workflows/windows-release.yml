@@ -58,12 +58,13 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DENABLE_ASAN=OFF
           -DFUNSHI_JAVA=ON
+          -DFUNSHI_VERSION=${{ steps.ver.outputs.version }}
 
       - name: Compilar engine
         run: cmake --build build --config Release --target FunshiEngineGL
 
       - name: Compilar pruebas
-        run: cmake --build build --config Release --target filemanager-tests configuracion-tests eventbus-tests menu-tests assetmanager-tests texturemanager-tests estructuras-tests rendering-tests scripts-tests scripts-runtime-tests audio-tests userinterface-tests scripts-java-tests model-serialization-tests manifiesto-assets-tests orquestador-estado-tests tema-tests comandos-tests
+        run: cmake --build build --config Release --target terminal-emulator-tests diagnostic-registry-tests filemanager-tests configuracion-tests eventbus-tests menu-tests assetmanager-tests texturemanager-tests estructuras-tests rendering-tests scripts-tests scripts-runtime-tests audio-tests interface-component-tests barra-progreso-tests scripts-java-tests model-serialization-tests manifiesto-assets-tests orquestador-estado-tests tema-tests comandos-tests escena-serializacion-tests proceso-tests prefab-tests catalogo-componentes-tests interfaces-juego-tests
 
       - name: Ejecutar pruebas
         run: ctest --test-dir build -C Release --output-on-failure --verbose

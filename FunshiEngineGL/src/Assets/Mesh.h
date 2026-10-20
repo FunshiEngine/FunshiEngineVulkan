@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@
 
 #include "../Matematicas/StructVec3.h"
 
-// Geometria de una malla en CPU, independiente de OpenGL. Es el asset que
+// Geometria de una malla en CPU, independiente de la pila grafica. Es el asset que
 // comparte AssetManager entre objetos: lo genera el loader (Assimp en la
 // integracion con Modelos3D) o procedimentalmente, y el renderer moderno lo
 // sube a VBO/VAO. Ademas de vertices/normales/UVs, guarda el marco tangente

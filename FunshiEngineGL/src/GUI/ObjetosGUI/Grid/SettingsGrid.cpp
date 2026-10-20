@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,8 @@
 #include "../../../Objetos/Componentes/Grid.h"
 #include "../../../Objetos/GameObject.h"
 
-SettingsGrid::SettingsGrid(GameObject* gameObject) : gameObject(gameObject) {}
+SettingsGrid::SettingsGrid(GameObject* gameObject)
+    : SettingsComponent(demangle(typeid(Grid).name())), gameObject(gameObject) {}
 
 void SettingsGrid::showDataComponent() {
     Grid* grid = gameObject ? gameObject->getComponent<Grid>() : nullptr;
@@ -42,8 +43,4 @@ void SettingsGrid::showDataComponent() {
     // unidad, principales cada 5) y difuminado en el horizonte: NO hay
     // tamano ni separacion configurables (se eliminaron por diseño).
     ImGui::TextDisabled("Grilla infinita con densidad fija");
-}
-
-Component* SettingsGrid::getComponent() {
-    return gameObject ? gameObject->getComponent<Grid>() : nullptr;
 }

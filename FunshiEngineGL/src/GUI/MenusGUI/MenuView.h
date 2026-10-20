@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,13 +42,14 @@ private:
     // es el presenter quien informa a main via DebeCerrar().
     StartMenuPresenter* presenter;
     GLFWwindow* window;
-    // Buffer de edicion del nombre del proyecto. Vive en la vista porque es
-    // estado de UI (la vista avisa al modelo del cambio, no al reves).
-    char nombreProyectoBuffer[256];
-    // Indica que el buffer tiene cambios sin confirmar (el usuario escribio
-    // en el InputText pero aun no presiono "Confirmar"). La creacion de la
-    // carpeta y la notificacion al modelo solo ocurren al confirmar.
-    bool nombreProyectoPendiente = false;
+    // Modal "Crear proyecto": el estado del dialogo (abierto, dimension
+    // elegida y buffer del nombre) es estado de la vista; el modelo guarda la
+    // intencion final (dimension + nombre + AccionProyecto::Crear). El campo
+    // de nombre arranca vacio en cada apertura y valida no vacio/no repetido.
+    // Igual que ContentFolderInterface, se abre un frame despues de pedirlo
+    // para que ImGui registre bien el popup.
+    char nombreCrearBuffer[256] = "";
+    bool abrirModalCrearProyecto = false;
     // Modal de renombre: proyecto original en edicion y bandera que pide abrir
     // el modal ("Renombrar", con InputText propio + Confirmar/Cancelar). Igual
     // que ContentFolderInterface (abrirPopupRenombrar), se abre un frame
@@ -62,9 +63,14 @@ private:
     bool abrirModalEliminar = false;
 
     void renderizarPrincipal();
-    void renderizarListaProyectos();
     void renderizarOpciones();
+    // Vista ConfigProyecto: barra de navegacion a la izquierda + panel de la
+    // seccion activa (CrearProyecto / Proyectos / Importar) a la derecha.
     void renderizarConfigProyecto();
+    void renderizarSeccionCrearProyecto();
+    void renderizarSeccionProyectos();
+    void renderizarSeccionImportar();
+    void renderizarModalCrearProyecto();
 
 public:
     MenuView(MenuModel* model, StartMenuPresenter* presenter, GLFWwindow* window);

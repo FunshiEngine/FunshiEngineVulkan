@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,13 +26,13 @@
 
 #include "../Backend/IRenderBackend.h"
 
-// Programa de shaders RAII: compila/linkea via el backend y libera el handle en
-// el destructor. La factory fromSource() lanza ShaderCompileException /
-// ShaderLinkException / ShaderUnavailableException (se propagan desde
-// OpenGL3Backend::createProgram) si el pipeline moderno no esta disponible o
-// el shader falla. Los setters de uniforms cachean la location contra el
-// backend (la busqueda es costosa y los shaders optimizados devuelven -1 en
-// uniforms no usadas, que se ignoran sin ruido).
+// Programa de shaders RAII: lo pide al backend activo y libera el handle en
+// el destructor. La factory create() lanza ShaderCompileException /
+// ShaderLinkException / ShaderUnavailableException (se propagan desde el
+// backend) si el pipeline no esta disponible o el shader falla. Los setters de
+// uniforms cachean el localizador contra el backend (la busqueda es costosa y
+// los shaders optimizados no exponen los uniforms que no usan, que se ignoran
+// sin ruido).
 class ShaderProgram {
 private:
     Rendering::Backend::Handle program_ = Rendering::Backend::kInvalidHandle;
@@ -49,8 +49,9 @@ public:
     ShaderProgram(ShaderProgram&& other) noexcept;
     ShaderProgram& operator=(ShaderProgram&& other) noexcept;
 
-    static ShaderProgram fromSource(const char* vertexSource,
-                                    const char* fragmentSource);
+    // Pide al backend el programa del tipo indicado. El fuente del shader
+    // vive en el backend: cada API grafica tiene su propio dialecto.
+    static ShaderProgram create(Rendering::Contrato::ShaderKind kind);
 
     Rendering::Backend::Handle getProgramId() const { return program_; }
     bool isValid() const {

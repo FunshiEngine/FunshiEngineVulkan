@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,15 +19,14 @@
 #ifndef SETTINGSLIGHT_H
 #define SETTINGSLIGHT_H
 #include "../SettingsComponent.h"
-class GameObject;
-class Light;
+#include "../../../Objetos/GameObject.h"
+#include "../../../Objetos/Componentes/Light.h"
 
 class SettingsLight : public SettingsComponent {
 	GameObject* gameObject;
 public:
-	SettingsLight(GameObject* gameObject);
-
+	explicit SettingsLight(GameObject* gameObject);
 	void showDataComponent() override;
-	Component* getComponent() override;
+	Component* getComponent() override { return gameObject ? gameObject->getComponent<Light>() : nullptr; }
 };
 #endif

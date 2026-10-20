@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,13 +22,33 @@
 #include <iostream>
 
 #include "Configuracion/EditorConfig.h"
+#include "Diagnosticos/RegistroDiagnosticos.h"
 #include <nlohmann/json.hpp>
 
 namespace {
 
 // Version del formato del manifiesto: se incrementa al cambiar el esquema.
 // El campo es solo informativo; la lectura no exige una version exacta.
-constexpr int VERSION_MANIFIESTO = 1;
+constexpr int VERSION_MANIFIESTO = 2;
+
+// Las seis caras del cubemap del Skybox, con la clave de cada una. Se agrupan en
+// un array para que escribir, leer y transformar rutas no puedan quedar por debajo
+// de las texturas: el manifiesto declara que su contenido tiene precedencia sobre
+// los paths del .db, y sin esto las caras solo vivian en el .db (que se escribe al
+// salir, no con Ctrl+S) y se perdian en un guardado intermediano.
+constexpr std::array<const char*, 6> CARAS_CUBEMAP = {
+    "caraMasX", "caraMenosX", "caraMasY",
+    "caraMenosY", "caraMasZ", "caraMenosZ"};
+
+std::array<std::string*, 6> carasCubemap(EntradaAssets& entrada) {
+    return {&entrada.caraMasX,  &entrada.caraMenosX, &entrada.caraMasY,
+            &entrada.caraMenosY, &entrada.caraMasZ,  &entrada.caraMenosZ};
+}
+
+std::array<const std::string*, 6> carasCubemap(const EntradaAssets& entrada) {
+    return {&entrada.caraMasX,  &entrada.caraMenosX, &entrada.caraMasY,
+            &entrada.caraMenosY, &entrada.caraMasZ,  &entrada.caraMenosZ};
+}
 
 nlohmann::json entradaAJson(const EntradaAssets& entrada) {
     nlohmann::json objeto = nlohmann::json::object();
@@ -38,8 +58,19 @@ nlohmann::json entradaAJson(const EntradaAssets& entrada) {
     for (const std::string& textura : entrada.texturas)
         texturas.push_back(textura);
     objeto["texturas"] = std::move(texturas);
-    if (!entrada.script.empty())
-        objeto["script"] = entrada.script;
+    if (!entrada.scripts.empty()) {
+        nlohmann::json scripts = nlohmann::json::array();
+        for (const std::string& script : entrada.scripts) {
+            if (!script.empty())
+                scripts.push_back(script);
+        }
+        if (!scripts.empty())
+            objeto["scripts"] = std::move(scripts);
+    }
+    const std::array<const std::string*, 6> caras = carasCubemap(entrada);
+    for (std::size_t i = 0; i < caras.size(); ++i)
+        if (!caras[i]->empty())
+            objeto[CARAS_CUBEMAP[i]] = *caras[i];
     return objeto;
 }
 
@@ -48,8 +79,22 @@ bool jsonAEntrada(const nlohmann::json& objeto, EntradaAssets& entrada) {
         return false;
     if (objeto.contains("malla") && objeto["malla"].is_string())
         entrada.malla = objeto["malla"].get<std::string>();
-    if (objeto.contains("script") && objeto["script"].is_string())
-        entrada.script = objeto["script"].get<std::string>();
+    // Leer scripts (nuevo formato: array "scripts")
+    if (objeto.contains("scripts") && objeto["scripts"].is_array()) {
+        for (const auto& script : objeto["scripts"]) {
+            if (script.is_string()) {
+                std::string scriptStr = script.get<std::string>();
+                if (!scriptStr.empty())
+                    entrada.scripts.push_back(std::move(scriptStr));
+            }
+        }
+    }
+    // Compatibilidad con formato legacy: campo "script" (string simple)
+    else if (objeto.contains("script") && objeto["script"].is_string()) {
+        std::string scriptStr = objeto["script"].get<std::string>();
+        if (!scriptStr.empty())
+            entrada.scripts.push_back(std::move(scriptStr));
+    }
     if (objeto.contains("texturas") && objeto["texturas"].is_array()) {
         // Solo los slots presentes (hasta 4); los ausentes quedan vacios.
         const std::size_t slots =
@@ -58,6 +103,11 @@ bool jsonAEntrada(const nlohmann::json& objeto, EntradaAssets& entrada) {
             if (objeto["texturas"][i].is_string())
                 entrada.texturas[i] = objeto["texturas"][i].get<std::string>();
     }
+    const std::array<std::string*, 6> caras = carasCubemap(entrada);
+    for (std::size_t i = 0; i < caras.size(); ++i)
+        if (objeto.contains(CARAS_CUBEMAP[i]) &&
+            objeto[CARAS_CUBEMAP[i]].is_string())
+            *caras[i] = objeto[CARAS_CUBEMAP[i]].get<std::string>();
     return true;
 }
 
@@ -106,7 +156,10 @@ bool ManifiestoAssetsCore::leerArchivo(
                 entradas[id] = std::move(entrada);
         }
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        registrarExcepcionDiagnostica(
+            "Scenes/ManifiestoAssets", e, NivelDiagnostico::Advertencia,
+            "manifiesto:" + ruta);
         return false;
     }
 }
@@ -115,14 +168,20 @@ void ManifiestoAssetsCore::relativizarEntrada(EntradaAssets& entrada) {
     entrada.malla = EditorConfig::relativizarRuta(entrada.malla);
     for (std::string& textura : entrada.texturas)
         textura = EditorConfig::relativizarRuta(textura);
-    entrada.script = EditorConfig::relativizarRuta(entrada.script);
+    for (std::string& script : entrada.scripts)
+        script = EditorConfig::relativizarRuta(script);
+    for (std::string* cara : carasCubemap(entrada))
+        *cara = EditorConfig::relativizarRuta(*cara);
 }
 
 void ManifiestoAssetsCore::absolutizarEntrada(EntradaAssets& entrada) {
     entrada.malla = EditorConfig::absolutizarRuta(entrada.malla);
     for (std::string& textura : entrada.texturas)
         textura = EditorConfig::absolutizarRuta(textura);
-    entrada.script = EditorConfig::absolutizarRuta(entrada.script);
+    for (std::string& script : entrada.scripts)
+        script = EditorConfig::absolutizarRuta(script);
+    for (std::string* cara : carasCubemap(entrada))
+        *cara = EditorConfig::absolutizarRuta(*cara);
 }
 
 std::string ManifiestoAssetsCore::resolverRuta(
@@ -131,7 +190,14 @@ std::string ManifiestoAssetsCore::resolverRuta(
 }
 
 bool ManifiestoAssetsCore::entradaVacia(const EntradaAssets& entrada) {
-    return entrada.malla.empty() && entrada.script.empty() &&
-           entrada.texturas[0].empty() && entrada.texturas[1].empty() &&
-           entrada.texturas[2].empty() && entrada.texturas[3].empty();
+    if (!entrada.malla.empty())
+        return false;
+    for (const std::string& script : entrada.scripts)
+        if (!script.empty())
+            return false;
+    for (const std::string& textura : entrada.texturas)
+        if (!textura.empty()) return false;
+    for (const std::string* cara : carasCubemap(entrada))
+        if (!cara->empty()) return false;
+    return true;
 }

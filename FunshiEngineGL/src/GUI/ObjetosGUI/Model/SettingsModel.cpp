@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,12 +20,14 @@
 
 #include "../../../Objetos/GameObject.h"
 #include "../../../Objetos/Componentes/Model.h"
+#include "../../../Assets/AssimpMeshLoader.h"
 #include <imgui.h>
+#include <iostream>
 #include <string>
 
-SettingsModel::SettingsModel(GameObject* objeto) {
-	myModel = objeto->getComponent<Model>();
-}
+SettingsModel::SettingsModel(GameObject* objeto)
+    : SettingsComponent(demangle(typeid(Model).name())),
+      myModel(objeto ? objeto->getComponent<Model>() : nullptr) {}
 
 void SettingsModel::showDataComponent() {
 	// 1. Obtener texto a mostrar
@@ -47,10 +49,17 @@ void SettingsModel::showDataComponent() {
 		if (const ImGuiPayload* payload =
 		        ImGui::AcceptDragDropPayload("ARCHIVO_PATH")) {
 			const char* path = (const char*)payload->Data;
-			myModel->setPath(path);
+			// Se filtra aqui y no en Model::setPath: el componente guarda
+			// cualquier cadena porque todas las rutas se serializan, y el
+			// formato solo importa al elegir el archivo que se va a cargar.
+			if (AssimpMeshLoader::puedeLeerFormato(path)) {
+				myModel->setPath(path);
+			} else {
+				std::cerr << "[Model] archivo no es un formato 3D que Assimp "
+				             "pueda importar; ruta sin asignar: "
+				          << path << std::endl;
+			}
 		}
 		ImGui::EndDragDropTarget();
 	}
 }
-
-Component* SettingsModel::getComponent() { return myModel; }

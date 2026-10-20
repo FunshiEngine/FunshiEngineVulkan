@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@
 #include <cstring>
 
 SettingsAudioSource::SettingsAudioSource(GameObject* gameObject)
-    : gameObject(gameObject) {}
+    : SettingsComponent(demangle(typeid(AudioSource).name())), gameObject(gameObject) {}
 
 void SettingsAudioSource::showDataComponent() {
 	AudioSource* source = gameObject->getComponent<AudioSource>();
@@ -66,8 +66,4 @@ void SettingsAudioSource::showDataComponent() {
 	if (ImGui::Button("Detener todo"))
 		if (motor) motor->detenerTodo();
 	ImGui::EndDisabled();
-}
-
-Component* SettingsAudioSource::getComponent() {
-	return gameObject->getComponent<AudioSource>();
 }

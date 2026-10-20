@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@
 #include "Objetos/Componentes/Material.h"
 #include "Objetos/Componentes/Model.h"
 #include "Objetos/Componentes/Script.h"
+#include "Objetos/Componentes/Skybox.h"
 #include "Objetos/GameObject.h"
 #include "Objetos/Modelos3D.h"
 
@@ -54,7 +55,14 @@ EntradaAssets recogerDeObjeto(GameObject& objeto) {
                     if (entrada.malla.empty())
                         entrada.malla = model->getPath();
                 } else if (auto* script = dynamic_cast<Script*>(componente)) {
-                    entrada.script = script->getPath();
+                    entrada.scripts.push_back(script->getPath());
+                } else if (auto* skybox = dynamic_cast<Skybox*>(componente)) {
+                    entrada.caraMasX = skybox->getCaraMasX();
+                    entrada.caraMenosX = skybox->getCaraMenosX();
+                    entrada.caraMasY = skybox->getCaraMasY();
+                    entrada.caraMenosY = skybox->getCaraMenosY();
+                    entrada.caraMasZ = skybox->getCaraMasZ();
+                    entrada.caraMenosZ = skybox->getCaraMenosZ();
                 }
             }
             pos = (pos == componentes->last()) ? nullptr : componentes->next(pos);
@@ -78,6 +86,8 @@ int aplicarCampo(const std::string& persistida, const std::string& vigente,
 // los campos que cambiaron (guarda de recargas innecesarias de malla/script).
 int aplicarEnObjeto(GameObject& objeto, const EntradaAssets& entrada) {
     int cambios = 0;
+    // Contador local para indices de scripts: se reinicia a 0 por cada objeto
+    size_t scriptIndex = 0;
 
     if (auto* modelo = dynamic_cast<Modelos3D*>(&objeto)) {
         cambios += aplicarCampo(entrada.malla, modelo->getPath(),
@@ -106,8 +116,46 @@ int aplicarEnObjeto(GameObject& objeto, const EntradaAssets& entrada) {
                     cambios += aplicarCampo(entrada.malla, model->getPath(),
                                             [model](const std::string& p) { model->setPath(p); });
                 } else if (auto* script = dynamic_cast<Script*>(componente)) {
-                    cambios += aplicarCampo(entrada.script, script->getPath(),
-                                            [script](const std::string& p) { script->setDllPath(p); });
+                    // Match scripts by index: the nth script in the object gets the nth path from the manifest
+                    // Copia local del tamanio para evitar cualquier problema de optimizacion
+                    const size_t scriptCount = entrada.scripts.size();
+                    if (scriptCount == 0) {
+                        // No hay scripts en el manifiesto, saltamos
+                    } else if (scriptIndex < scriptCount) {
+                        // Verificacion defensiva exhaustiva: indice en rango [0, scriptCount-1]
+                        // Usamos una variable auxiliar para evitar cualquier optimizacion
+                        const size_t safeIndex = scriptIndex;
+                        // Acceso seguro: usamos at() que lanza excepcion si fuera de rango
+                        try {
+                            const std::string& scriptPath = entrada.scripts.at(safeIndex);
+                            cambios += aplicarCampo(scriptPath, script->getPath(),
+                                                    [script](const std::string& p) { script->setDllPath(p); });
+                            scriptIndex++;
+                        } catch (const std::out_of_range&) {
+                            // Si por alguna razon el indice esta fuera de rango, reseteamos y continuamos
+                            scriptIndex = 0;
+                        }
+                    } else {
+                        // Indice fuera de rango: reseteamos para el siguiente objeto
+                        scriptIndex = 0;
+                    }
+                    // Reseteo defensivo adicional
+                    if (scriptIndex >= entrada.scripts.size()) {
+                        scriptIndex = 0;
+                    }
+                } else if (auto* skybox = dynamic_cast<Skybox*>(componente)) {
+                    cambios += aplicarCampo(entrada.caraMasX, skybox->getCaraMasX(),
+                                            [skybox](const std::string& p) { skybox->setCaraMasX(p); });
+                    cambios += aplicarCampo(entrada.caraMenosX, skybox->getCaraMenosX(),
+                                            [skybox](const std::string& p) { skybox->setCaraMenosX(p); });
+                    cambios += aplicarCampo(entrada.caraMasY, skybox->getCaraMasY(),
+                                            [skybox](const std::string& p) { skybox->setCaraMasY(p); });
+                    cambios += aplicarCampo(entrada.caraMenosY, skybox->getCaraMenosY(),
+                                            [skybox](const std::string& p) { skybox->setCaraMenosY(p); });
+                    cambios += aplicarCampo(entrada.caraMasZ, skybox->getCaraMasZ(),
+                                            [skybox](const std::string& p) { skybox->setCaraMasZ(p); });
+                    cambios += aplicarCampo(entrada.caraMenosZ, skybox->getCaraMenosZ(),
+                                            [skybox](const std::string& p) { skybox->setCaraMenosZ(p); });
                 }
             }
             pos = (pos == componentes->last()) ? nullptr : componentes->next(pos);

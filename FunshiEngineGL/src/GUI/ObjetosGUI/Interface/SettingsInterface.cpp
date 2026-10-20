@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,28 +22,104 @@
 #include "../../../Objetos/Componentes/InterfaceComponent.h"
 
 #include <imgui.h>
+
+#include <cctype>
 #include <cstring>
+#include <string>
+
+namespace {
+
+const char* NOMBRES_ANCLA[] = {
+    "Arriba izquierda", "Arriba centro", "Arriba derecha",
+    "Medio izquierda",  "Centro",        "Medio derecha",
+    "Abajo izquierda",  "Abajo centro",  "Abajo derecha"};
+
+constexpr int TOTAL_ANCLAS = 9;
+
+// El filtro del .html se hace aqui y no en el componente: el componente guarda
+// cualquier ruta (todas se serializan); el formato solo importa al elegir el
+// archivo que se va a cargar.
+bool esHtml(const std::string& ruta) {
+    if (ruta.size() < 5) return false;
+    const std::string ext = ruta.substr(ruta.size() - 5);
+    for (std::size_t i = 0; i < ext.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(ext[i])) !=
+            ".html"[i])
+            return false;
+    }
+    return true;
+}
+
+} // namespace
 
 SettingsInterface::SettingsInterface(GameObject* gameObject)
-    : gameObject(gameObject) {}
+    : SettingsComponent(demangle(typeid(InterfaceComponent).name())), gameObject(gameObject) {}
 
 void SettingsInterface::showDataComponent() {
     InterfaceComponent* comp = gameObject->getComponent<InterfaceComponent>();
     if (!comp) return;
 
-    ImGui::Text("===Interfaz del jugador===");
+    ImGui::Text("===Interfaz del jugador (HTML)===");
 
-    // Nombre del asset (texto editable): debe coincidir con un asset de
-    // Memory/Interfaces/ del proyecto. Al entrar en play se muestra a pantalla
-    // completa delante de la camara principal.
-    char buffer[256] = {};
-    std::strncpy(buffer, comp->getInterfaz().c_str(), sizeof(buffer) - 1);
-    if (ImGui::InputText("Nombre de interfaz", buffer, sizeof(buffer)))
-        comp->setInterfaz(buffer);
+    // Origen de arrastre: lleva el nombre del objeto dueño de la interfaz para
+    // asignarla a un campo TagTipo::Componente de un script.
+    const std::string etiquetaDrag =
+        std::string("Interfaz de: ") +
+        (gameObject->inputName[0] != '\0' ? gameObject->inputName
+                                          : "(objeto)");
+    ImGui::Button(etiquetaDrag.c_str());
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "Arrastra a un campo de script para asignar esta interfaz");
+    if (ImGui::BeginDragDropSource()) {
+        const char* dueno = gameObject->inputName;
+        ImGui::SetDragDropPayload("COMPONENTE_INTERFAZ", dueno,
+                                  std::strlen(dueno) + 1);
+        ImGui::TextUnformatted("Asignar interfaz a un script");
+        ImGui::EndDragDropSource();
+    }
 
-    ImGui::TextDisabled("Se muestra en modo play, a pantalla completa");
-}
+    // Boton con la ruta actual: es el destino del arrastre desde el explorador.
+    const std::string& ruta = comp->getRutaHtml();
+    const char* texto = ruta.empty() ? "[Arrastra un .html]" : ruta.c_str();
+    const float ancho = ImGui::CalcTextSize(texto).x +
+                        ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SetNextItemWidth(ancho);
+    ImGui::Button(texto);
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload =
+                ImGui::AcceptDragDropPayload("ARCHIVO_PATH")) {
+            const char* rutaSoltada = static_cast<const char*>(payload->Data);
+            if (esHtml(rutaSoltada))
+                comp->setRutaHtml(rutaSoltada);
+        }
+        ImGui::EndDragDropTarget();
+    }
 
-Component* SettingsInterface::getComponent() {
-    return gameObject->getComponent<InterfaceComponent>();
+    bool activo = comp->estaActiva();
+    if (ImGui::Checkbox("Activa", &activo))
+        comp->setActivo(activo);
+
+    int ancla = static_cast<int>(comp->getAncla());
+    if (ImGui::Combo("Ancla", &ancla, NOMBRES_ANCLA, TOTAL_ANCLAS))
+        comp->setAncla(static_cast<AnclaInterfaz>(ancla));
+
+    glm::vec2 desplazamiento = comp->getDesplazamiento();
+    if (ImGui::DragFloat2("Desplazamiento", &desplazamiento.x, 1.0f))
+        comp->setDesplazamiento(desplazamiento);
+
+    bool tamanoAuto = comp->usaTamanoAuto();
+    if (ImGui::Checkbox("Tamano automatico (CSS)", &tamanoAuto))
+        comp->setTamanoAuto(tamanoAuto);
+    if (!comp->usaTamanoAuto()) {
+        glm::vec2 tamano = comp->getTamano();
+        if (ImGui::DragFloat2("Tamano", &tamano.x, 1.0f))
+            comp->setTamano(tamano);
+    }
+
+    float z = comp->getZ();
+    if (ImGui::DragFloat("Z", &z, 0.1f))
+        comp->setZ(z);
+
+    ImGui::TextDisabled("Se muestra en modo play; el CSS define el tamano");
 }

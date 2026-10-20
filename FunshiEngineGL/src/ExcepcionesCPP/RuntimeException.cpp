@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,9 +41,14 @@
 #include <dlfcn.h>
 #endif
 using namespace std;
-RuntimeException::RuntimeException(const string& msg)
+
+RuntimeException::RuntimeException(const string& msg, const string& tipo)
     : std::runtime_error(msg),
-    stackTrace(generateStackTrace()) {
+      stackTrace(generateStackTrace()),
+      tipoExcepcion(tipo) {}
+
+const std::string& RuntimeException::getTipoExcepcion() const noexcept {
+    return tipoExcepcion;
 }
 
 std::string RuntimeException::getStackTrace() const {

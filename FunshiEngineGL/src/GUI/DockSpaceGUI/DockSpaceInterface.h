@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,15 +21,19 @@
 
 #include "../GeneralUserInterface.h"
 #include <imgui.h>
+#include <string>
+#include <unordered_map>
 
 class DockSpaceInterface : public GeneralUserInterface {
 protected:
 	ImGuiID dockspaceId = 0;
+	std::unordered_map<std::string, ImGuiID> ultimoDockValido_;
 public:
 	DockSpaceInterface(bool stateGUI);
 	virtual void initGUI() override;
 	virtual void contentGUI() override;
 	virtual void endGUI() override;
 	virtual void printGUI() override;
+	void repararVentanasFlotantes();
 };
 #endif

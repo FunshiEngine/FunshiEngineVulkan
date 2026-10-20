@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,20 +19,34 @@
 #include "GameObject.h"
 #include "Componentes/ComponentFactory.h"
 #include "Componentes/CameraComponent.h"
+#include "Componentes/Script.h"
+#include "TagRegistry.h"
 
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <typeinfo>
+#include <utility>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-GameObject::GameObject(Entity* origin) : Entity(origin) {}
+namespace {
+constexpr std::uint32_t kTagMagic = 0x31474154;
+constexpr std::uint32_t kTagVersion = 1;
+constexpr std::size_t kTagMaxLength = 1024;
+}
 
-GameObject::GameObject() : Entity() {}
+GameObject::GameObject(Entity* origin) : Entity(origin) {
+    TagRegistry::registrar(tag_);
+}
+
+GameObject::GameObject() : Entity() {
+    TagRegistry::registrar(tag_);
+}
 
 GameObject::~GameObject() = default;
 
@@ -256,6 +270,12 @@ int GameObject::getTam() {
     return tam;
 }
 
+void GameObject::setTag(std::string tag) {
+    if (tag.empty()) tag = "Untagged";
+    tag_ = std::move(tag);
+    TagRegistry::registrar(tag_);
+}
+
 
 void GameObject::update(float deltaTime) {
 
@@ -265,8 +285,19 @@ void GameObject::update(float deltaTime) {
         body->syncPhysicsToGameObject();
     }
 
-    if (Script* script = getComponent<Script>()) {
-        script->actualizar(this, deltaTime);
+    if (components && !components->isEmpty()) {
+        Position<Component*>* position = components->first();
+        while (position) {
+            Component* componente = position->getElement();
+            if (Script* script = dynamic_cast<Script*>(componente))
+                script->actualizar(this, deltaTime);
+            // Hook generico por frame (animacion y demas componentes con
+            // estado): cada componente decide si hace algo.
+            if (componente) componente->onUpdate(*this, deltaTime);
+            position = position != components->last()
+                           ? components->next(position)
+                           : nullptr;
+        }
     }
 }
 
@@ -305,6 +336,14 @@ void GameObject::serializeLocalAtributes() {
     );
 
     serializeEntityComponents();
+
+    const std::uint32_t magic = kTagMagic;
+    const std::uint32_t version = kTagVersion;
+    const std::uint32_t length = static_cast<std::uint32_t>(tag_.size());
+    file->write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    file->write(reinterpret_cast<const char*>(&version), sizeof(version));
+    file->write(reinterpret_cast<const char*>(&length), sizeof(length));
+    file->write(tag_.data(), static_cast<std::streamsize>(length));
 }
 
 
@@ -383,6 +422,33 @@ void GameObject::deserializeLocalAtributes() {
     );
 
     deserializeEntityComponents();
+
+    tag_ = "Untagged";
+    if (file->peek() == std::char_traits<char>::eof()) {
+        file->clear();
+        return;
+    }
+
+    std::uint32_t magic = 0;
+    std::uint32_t version = 0;
+    std::uint32_t length = 0;
+    file->read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    file->read(reinterpret_cast<char*>(&version), sizeof(version));
+    file->read(reinterpret_cast<char*>(&length), sizeof(length));
+    if (!*file || magic != kTagMagic || version != kTagVersion ||
+        length == 0 || length > kTagMaxLength) {
+        std::cerr << "Metadatos de tag invalidos en el objeto\n";
+        file->setstate(std::ios::failbit);
+        return;
+    }
+
+    std::string tag(length, '\0');
+    file->read(tag.data(), static_cast<std::streamsize>(length));
+    if (!*file) {
+        std::cerr << "Tag truncado en el objeto\n";
+        return;
+    }
+    setTag(std::move(tag));
 }
 
 
@@ -623,7 +689,7 @@ void GameObject::deserializeEntity() {
  * La estructura de la escena y BBDDObjetos.txt es responsabilidad
  * exclusiva de SceneSerializer.
  */
-void GameObject::saveEntity(std::string filename) {
+bool GameObject::saveEntity(std::string filename) {
 
     const std::string path =
         filename +
@@ -634,15 +700,17 @@ void GameObject::saveEntity(std::string filename) {
     myBinario =
         std::make_unique<Binario>(path);
 
-    myBinario->ofOpenBinary();
+    if (!myBinario->ofOpenBinary())
+        return false;
 
     serializeEntity();
 
     myBinario->ofCloseBinary();
+    return true;
 }
 
 
-void GameObject::loadEntity(std::string filename) {
+bool GameObject::loadEntity(std::string filename) {
 
     const std::string path =
         filename +
@@ -653,11 +721,13 @@ void GameObject::loadEntity(std::string filename) {
     myBinario =
         std::make_unique<Binario>(path);
 
-    myBinario->ifOpenBinary();
+    if (!myBinario->ifOpenBinary())
+        return false;
 
     deserializeEntity();
 
     myBinario->ifCloseBinary();
+    return true;
 }
 
 

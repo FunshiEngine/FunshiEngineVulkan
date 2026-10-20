@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
 
     Copyright 2026 Gianfranco Ivan Enrique
 
@@ -28,11 +28,25 @@ OrquestadorEstadoGUI::OrquestadorEstadoGUI(ApplicationStateMachine* maquina) noe
     assert(maquina && "El orquestador necesita la maquina de estados");
 }
 
-// Centraliza "Escape en el editor vuelve al menu principal". Antes esta
-// transicion colgaba en el callback de teclado de main; ahora la regla vive
-// aqui. Es inofensivo si ya estamos en el menu (guardia explicita).
+// Centraliza "Escape en el editor vuelve al menu principal" y "Escape durante
+// el play detiene la simulacion". Antes esta transicion colgaba en el callback
+// de teclado de main; ahora la regla vive aqui. Es inofensivo si ya estamos en
+// el menu (guardia explicita).
+//
+// Reglas por estado:
+//  - MainMenu: no hay nada que abandonar.
+//  - Editing: vuelve al menu principal.
+//  - Debugging y Playing: termina la simulacion y vuelve al editor. El cierre
+//    conserva la escena en Depuracion y restaura el baseline en Juego.
 void OrquestadorEstadoGUI::manejarTeclaEscape() noexcept
 {
+    if (enSimulacion()) {
+        // Misma regla que F7: cortar la simulacion y dejar la pausa limpia
+        // para el proximo play.
+        simulacionPausada_ = false;
+        maquina->transitionTo(ApplicationState::Editing);
+        return;
+    }
     if (maquina->is(ApplicationState::Editing)) {
         maquina->transitionTo(ApplicationState::MainMenu);
     }
@@ -58,43 +72,89 @@ bool OrquestadorEstadoGUI::iniciarEstudio() noexcept
 // reenvia; main refleja la decision sobre la escena con setStart().
 //
 // Reglas:
-//  - F5 Play solo arranca desde el editor (Editing -> Playing); en Playing ya
-//    esta corriendo y en el menu no tiene sentido. Al arrancar, la pausa
-//    nunca queda heredada del play anterior.
-//  - F6 Pausa alterna congelar/reanudar SOLO mientras se simula (Playing);
+//  - F5 Depuracion solo arranca desde el editor (Editing -> Debugging).
+//  - Juego arranca desde el editor (Editing -> Playing).
+//  - F6 Pausa alterna congelar/reanudar SOLO mientras se simula
+//    (Debugging o Playing);
 //    fuera del play es inofensivo (no cambia nada).
-//  - F7 Stop solo corta desde Playing (Playing -> Editing) y deja la pausa
-//    limpia para el proximo play. En el editor/menu es inofensivo.
-// En los tres casos el boton "Activar/Detener" del menu de escena y estas
-// teclas comparten la misma fuente de verdad: la maquina de estados.
+//  - F7 Stop corta desde cualquiera de los modos de simulacion y deja la pausa
+//    limpia para el proximo inicio. En el editor/menu es inofensivo.
+// Los botones y las teclas comparten la misma fuente de verdad: la maquina
+// de estados.
 void OrquestadorEstadoGUI::manejarTeclaSimulacion(TeclaSimulacion tecla) noexcept
 {
     switch (tecla) {
-        case TeclaSimulacion::Play:
+        case TeclaSimulacion::Depuracion:
+            if (maquina->is(ApplicationState::Editing)) {
+                simulacionPausada_ = false;
+                maquina->transitionTo(ApplicationState::Debugging);
+            }
+            break;
+        case TeclaSimulacion::Juego:
             if (maquina->is(ApplicationState::Editing)) {
                 simulacionPausada_ = false;
                 maquina->transitionTo(ApplicationState::Playing);
             }
             break;
         case TeclaSimulacion::Pausa:
-            if (maquina->is(ApplicationState::Playing)) {
+            if (enSimulacion()) {
                 simulacionPausada_ = !simulacionPausada_;
             }
             break;
         case TeclaSimulacion::Stop:
-            if (maquina->is(ApplicationState::Playing)) {
+            if (enSimulacion()) {
                 simulacionPausada_ = false;
                 maquina->transitionTo(ApplicationState::Editing);
             }
+            break;
+        case TeclaSimulacion::Reset:
+            if (enSimulacion()) solicitudReset_ = true;
             break;
         case TeclaSimulacion::Ninguna:
             break;
     }
 }
 
+// El boton de inicio de Depuracion comparte la regla de F5 y el de terminar
+// comparte F7; ambos caminos pasan por la maquina de estados.
+void OrquestadorEstadoGUI::alternarSimulacion() noexcept
+{
+    manejarTeclaSimulacion(enSimulacion() ? TeclaSimulacion::Stop
+                                          : TeclaSimulacion::Depuracion);
+}
+
+void OrquestadorEstadoGUI::iniciarJuego() noexcept
+{
+    manejarTeclaSimulacion(TeclaSimulacion::Juego);
+}
+
+void OrquestadorEstadoGUI::solicitarReset() noexcept
+{
+    manejarTeclaSimulacion(TeclaSimulacion::Reset);
+}
+
+bool OrquestadorEstadoGUI::consumirSolicitudReset() noexcept
+{
+    const bool solicitada = solicitudReset_;
+    solicitudReset_ = false;
+    return solicitada;
+}
+
 bool OrquestadorEstadoGUI::menuDebeEstarVisible() const noexcept
 {
     return maquina->is(ApplicationState::MainMenu);
+}
+
+// "Dentro del editor" = editor o play. Es la condicion que comparten las teclas
+// del editor que tienen sentido mientras se edita Y mientras se simula (E,
+// WASD, guia de eje, modo del cursor): con la simulacion en marcha el editor no
+// desaparece, solo deja de dibujar sus interfaces, asi que el teclado sigue
+// siendo del editor. Solo el menu de inicio queda afuera.
+bool OrquestadorEstadoGUI::dentroDelEditor() const noexcept
+{
+    return maquina->is(ApplicationState::Editing) ||
+           maquina->is(ApplicationState::Debugging) ||
+           maquina->is(ApplicationState::Playing);
 }
 
 bool OrquestadorEstadoGUI::escenaDebeCorrer() const noexcept
@@ -105,6 +165,16 @@ bool OrquestadorEstadoGUI::escenaDebeCorrer() const noexcept
 }
 
 bool OrquestadorEstadoGUI::enSimulacion() const noexcept
+{
+    return enDepuracion() || enModoJuego();
+}
+
+bool OrquestadorEstadoGUI::enDepuracion() const noexcept
+{
+    return maquina->is(ApplicationState::Debugging);
+}
+
+bool OrquestadorEstadoGUI::enModoJuego() const noexcept
 {
     return maquina->is(ApplicationState::Playing);
 }

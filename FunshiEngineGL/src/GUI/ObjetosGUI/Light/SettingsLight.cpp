@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,9 +22,8 @@
 #include "../../../Objetos/Componentes/Light.h"
 #include <imgui.h>
 
-SettingsLight::SettingsLight(GameObject* gameObject) {
-	this->gameObject = gameObject;
-}
+SettingsLight::SettingsLight(GameObject* gameObject)
+    : SettingsComponent(demangle(typeid(Light).name())), gameObject(gameObject) {}
 
 void SettingsLight::showDataComponent() {
 	Light* light = gameObject->getComponent<Light>();
@@ -69,8 +68,4 @@ void SettingsLight::showDataComponent() {
 		if (ImGui::SliderFloat("Corte del cono", &cutoff, 1.f, 90.f))
 			light->setSpotCutOff(cutoff);
 	}
-}
-
-Component* SettingsLight::getComponent() {
-	return gameObject->getComponent<Light>();
 }

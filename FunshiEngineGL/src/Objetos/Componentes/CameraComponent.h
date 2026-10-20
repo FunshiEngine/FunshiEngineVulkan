@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,15 @@ class Transform;
 // modo que el gizmo y el inspector pueden editar la camara como a cualquier
 // otro objeto.
 class CameraComponent : public Component {
+public:
+    // Tipo de proyeccion de la vista. El entero representa el contrato
+    // persistido (0 = perspectiva, 1 = ortografica), para que el binario sea
+    // estable sin una tabla de mapeo aparte.
+    enum class Projection {
+        Perspective = 0,
+        Orthographic = 1
+    };
+
 private:
     GameObject* owner = nullptr;
     float m_pos[3] = {0.f, 0.f, 0.f};
@@ -44,6 +53,11 @@ private:
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;
     bool pintar = false;
+    Projection projection = Projection::Perspective;
+    // Media altura del volumen visible en ortografica, en unidades de mundo.
+    // La mitad del ancho sale de multiplicarla por el aspect. Es el "zoom" de
+    // la vista 2D.
+    float orthoSize = 5.0f;
 
     Transform* getLocalTransform() const;
     void leerDesdeTransform();
@@ -78,6 +92,8 @@ public:
     // el picking y el render comparten la misma fuente de verdad.
     void getViewMatrix(float* outMatrix) const;
     void getProjectionMatrix(float* outMatrix, float aspect) const;
+    void getProjectionMatrix(float* outMatrix, float aspect,
+                             float limiteFarPlane) const;
 
     // Navegacion FPS (misma API que el viejo Camera).
     void forward(float dt);
@@ -116,6 +132,12 @@ public:
 
     float getFov() const { return fov; }
     void setFov(float v) { fov = v; }
+
+    Projection getProjection() const { return projection; }
+    void setProjection(Projection v) { projection = v; }
+
+    float getOrthoSize() const { return orthoSize; }
+    void setOrthoSize(float v) { orthoSize = v; }
     float getNearPlane() const { return nearPlane; }
     void setNearPlane(float v) { nearPlane = v; }
     float getFarPlane() const { return farPlane; }

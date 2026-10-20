@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,10 +31,9 @@ inline constexpr const char* Settings       = "Settings";
 inline constexpr const char* MenuBar        = "MenuBar";
 inline constexpr const char* EditorDockSpace = "EditorDockSpace";
 inline constexpr const char* Status         = "Estado";
-// Ventanas del sistema de audio + creador de interfaces (CreadorDeInterfaces)
-// y el canvas que las pinta con sonido (CanvasInterface).
-inline constexpr const char* CreadorInterfaces = "Creador de Interfaces";
-inline constexpr const char* CanvasUI        = "Canvas";
+inline constexpr const char* Terminal       = "Terminal";
+inline constexpr const char* CameraList     = "Camaras";
+inline constexpr const char* VistaInterfaz  = "Vista de interfaz";
 } // namespace WindowNames
 
 #endif

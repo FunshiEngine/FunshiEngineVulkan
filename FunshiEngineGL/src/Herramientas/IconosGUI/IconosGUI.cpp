@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,9 +71,10 @@ IconosGUI::~IconosGUI() {
     // en vez de repetir el bloque destroyTexture2D para cada miembro.
     Rendering::Backend::Handle* iconos[] = {
         &iconoCarpeta, &iconoArchivo, &iconoCpp, &iconoHpp, &iconoJava,
-        &iconoGameObject, &iconoLogo, &iconoBlend, &iconoCsv, &iconoExr,
+        &iconoGameObject, &iconoDepuracion, &iconoPlay, &iconoPausa,
+        &iconoReset, &iconoStop, &iconoLogo, &iconoBlend, &iconoCsv, &iconoExr,
         &iconoFbx, &iconoHdr, &iconoJpeg, &iconoJpg, &iconoJson, &iconoMax,
-        &iconoMaya, &iconoMp3, &iconoObj, &iconoOgg, &iconoOtf, &iconoPng,
+        &iconoMaya, &iconoMp3, &iconoObj, &iconoPrefab, &iconoOgg, &iconoOtf, &iconoPng,
         &iconoPsd, &iconoRs, &iconoTga, &iconoTtf, &iconoWav, &iconoXml,
         &iconoDb, &iconoMtl, &iconoRar, &iconoZip,
     };
@@ -87,43 +88,49 @@ IconosGUI::~IconosGUI() {
 
 void IconosGUI::init() {
     if (inicializado) return;
-    iconoCarpeta = cargarPNG("folder.png");
-    iconoArchivo = cargarPNG("file.png");
-    iconoCpp = cargarPNG("cpp.png");
-    iconoHpp = cargarPNG("hpp.png");
-    iconoJava = cargarPNG("java.png");
-    iconoGameObject = cargarPNG("cubo.png");
+    iconoCarpeta = cargarPNG("File-Image/folder.png");
+    iconoArchivo = cargarPNG("File-Image/file.png");
+    iconoCpp = cargarPNG("File-Image/cpp.png");
+    iconoHpp = cargarPNG("File-Image/hpp.png");
+    iconoJava = cargarPNG("File-Image/java.png");
+    iconoGameObject = cargarPNG("GUI-Image/Inspector/cubo.png");
+    iconoDepuracion = cargarPNG("GUI-Image/MenuBar/debug-button-white.png");
+    iconoPlay = cargarPNG("GUI-Image/MenuBar/play-button-triangle-white.png");
+    iconoPausa = cargarPNG("GUI-Image/MenuBar/pause-button-white.png");
+    iconoReset = cargarPNG("GUI-Image/MenuBar/restart-button-white.png");
+    iconoStop = cargarPNG("GUI-Image/MenuBar/stop-button-white.png");
     // El logo guarda sus dimensiones para que los consumidores respeten la
     // proporcion del asset a cualquier alto de pantalla.
-    iconoLogo = cargarPNG("FunshiEngineGL_Isotipo_Blanco.png", &anchoLogo,
+    iconoLogo = cargarPNG("Logo/FunshiEngineGL_Isotipo_Blanco.png", &anchoLogo,
                           &altoLogo);
     if (altoLogo < 1) altoLogo = 1;
-    // Iconos por extension de asset/formato (mismo nombre que el archivo en Imagenes/).
-    iconoBlend = cargarPNG("blend.png");
-    iconoCsv = cargarPNG("csv.png");
-    iconoExr = cargarPNG("exr.png");
-    iconoFbx = cargarPNG("fbx.png");
-    iconoHdr = cargarPNG("hdr.png");
-    iconoJpeg = cargarPNG("jpeg.png");
-    iconoJpg = cargarPNG("jpg.png");
-    iconoJson = cargarPNG("json.png");
-    iconoMax = cargarPNG("max.png");
-    iconoMaya = cargarPNG("maya.png");
-    iconoMp3 = cargarPNG("mp3.png");
-    iconoObj = cargarPNG("obj.png");
-    iconoOgg = cargarPNG("ogg.png");
-    iconoOtf = cargarPNG("otf.png");
-    iconoPng = cargarPNG("png.png");
-    iconoPsd = cargarPNG("psd.png");
-    iconoRs = cargarPNG("rs.png");
-    iconoTga = cargarPNG("tga.png");
-    iconoTtf = cargarPNG("ttf.png");
-    iconoWav = cargarPNG("wav.png");
-    iconoXml = cargarPNG("xml.png");
-    iconoDb = cargarPNG("db.png");
-    iconoMtl = cargarPNG("mtl.png");
-    iconoRar = cargarPNG("rar.png");
-    iconoZip = cargarPNG("zip.png");
+    // Iconos por extension de asset/formato (Imagenes/File-Image/ + nombre.png).
+    iconoBlend = cargarPNG("File-Image/blend.png");
+    iconoCsv = cargarPNG("File-Image/csv.png");
+    iconoExr = cargarPNG("File-Image/exr.png");
+    iconoFbx = cargarPNG("File-Image/fbx.png");
+    iconoHdr = cargarPNG("File-Image/hdr.png");
+    iconoJpeg = cargarPNG("File-Image/jpeg.png");
+    iconoJpg = cargarPNG("File-Image/jpg.png");
+    iconoJson = cargarPNG("File-Image/json.png");
+    iconoMax = cargarPNG("File-Image/max.png");
+    iconoMaya = cargarPNG("File-Image/maya.png");
+    iconoMp3 = cargarPNG("File-Image/mp3.png");
+    iconoObj = cargarPNG("File-Image/obj.png");
+    iconoPrefab = cargarPNG("File-Image/prefab.png");
+    iconoOgg = cargarPNG("File-Image/ogg.png");
+    iconoOtf = cargarPNG("File-Image/otf.png");
+    iconoPng = cargarPNG("File-Image/png.png");
+    iconoPsd = cargarPNG("File-Image/psd.png");
+    iconoRs = cargarPNG("File-Image/rs.png");
+    iconoTga = cargarPNG("File-Image/tga.png");
+    iconoTtf = cargarPNG("File-Image/ttf.png");
+    iconoWav = cargarPNG("File-Image/wav.png");
+    iconoXml = cargarPNG("File-Image/xml.png");
+    iconoDb = cargarPNG("File-Image/db.png");
+    iconoMtl = cargarPNG("File-Image/mtl.png");
+    iconoRar = cargarPNG("File-Image/rar.png");
+    iconoZip = cargarPNG("File-Image/zip.png");
     inicializado = true;
 }
 
@@ -225,6 +232,7 @@ ImTextureID IconosGUI::getIconoPorExtension(const std::string& extension) const 
     if (ext == ".ma" || ext == ".mb") return aImTexture(iconoMaya);              // Maya
     if (ext == ".fbx") return aImTexture(iconoFbx);
     if (ext == ".obj") return aImTexture(iconoObj);
+    if (ext == ".prefab") return aImTexture(iconoPrefab);
     if (ext == ".png") return aImTexture(iconoPng);
     if (ext == ".jpg" || ext == ".jpe") return aImTexture(iconoJpg);
     if (ext == ".jpeg") return aImTexture(iconoJpeg);

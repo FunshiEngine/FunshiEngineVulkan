@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,13 +28,19 @@
 //     rechazo de separadores), copiar carpeta/archivo, mover (incluye el
 //     rechazo de pisar un destino existente y de meter una carpeta en si
 //     misma), eliminar.
+//   - Plantilla de script C++: la fabrica que el motor busca con GetProcAddress
+//     tiene que viajar exportada en MSVC (H-15): la plantilla debe declarar el
+//     macro portable de exportacion.
 //   - Busqueda por ruta en el arbol vigente.
 //   - Arrastre-y-suelta (soltarEnCarpeta): mueve con Ctrl copia, y solo el
 //     movimiento publica ArchivosReubicados (lo que reescribe las rutas de la
 //     escena).
+//   - Renombre por click derecho (RenombrarElemento, compartido por el arbol y
+//     el grid): la ruta nueva es hermana de la vieja, el disco lo hace
+//     FileManager y solo un cambio real publica ArchivosReubicados.
 //   - Busqueda por ruta en el arbol vigente.
-//   - FileSystemWatcher (solo en Linux, donde usa inotify): deteccion de
-//     cambios externos y de ramas multi-nivel.
+//   - FileSystemWatcher: deteccion de cambios externos (inotify en Linux,
+//     polling temporal en el resto, con el intervalo inyectado).
 
 #include <chrono>
 #include <cstdio>
@@ -48,11 +54,11 @@
 
 #include "TempPruebas.h"
 #include "../FunshiEngineGL/src/FileManager/FileManager.h"
-#include "../FunshiEngineGL/src/GUI/FileManagerGUI/SoltarEnCarpeta.h"
-
-#if defined(__linux__)
 #include "../FunshiEngineGL/src/FileManager/FileSystemWatcher.h"
-#endif
+#include "../FunshiEngineGL/src/GUI/FileManagerGUI/CrearCarpeta.h"
+#include "../FunshiEngineGL/src/GUI/FileManagerGUI/RenombrarElemento.h"
+#include "../FunshiEngineGL/src/GUI/FileManagerGUI/SoltarEnCarpeta.h"
+#include "../FunshiEngineGL/src/GUI/ObjetosGUI/Skybox/SelectorArchivoCubemap.h"
 
 namespace fs = std::filesystem;
 
@@ -152,6 +158,68 @@ int main() {
     CHECK(fm.crearArchivo(rutaArchivo, "12345"), "crearArchivo crea en disco");
     CHECK(contenidoDe(rutaArchivo) == "12345", "el archivo nuevo tiene contenido");
 
+    // --- Crear carpeta: "se creo" en vez de "existe" ------------------------
+    // Un destino ya ocupado tiene que informar que esta vez no se creo nada; si
+    // no, el explorador cierra el modal creyendo que la carpeta nacio.
+    const std::string rutaRepetida = unir(proy, "Assets/Repetida");
+    CHECK(fm.crearCarpeta(rutaRepetida), "la primera creacion si crea");
+    CHECK(!fm.crearCarpeta(rutaRepetida),
+          "crearCarpeta no reporta exito si la carpeta ya existe");
+    CHECK(fs::is_directory(rutaRepetida),
+          "la carpeta existente sigue en su sitio");
+
+    CHECK(!fm.crearCarpeta(""), "crearCarpeta rechaza la ruta vacia");
+    const std::string archivoOcupado = unir(proy, "Assets/ocupado.txt");
+    CHECK(fm.crearArchivo(archivoOcupado, "x"), "archivo que ocupa el nombre");
+    CHECK(!fm.crearCarpeta(archivoOcupado),
+          "crearCarpeta falla si el destino es un archivo");
+
+    // El helper compartido por arbol y grid valida el nombre y decide el cierre.
+    CHECK(CrearCarpeta::nombreValido("Carpeta con espacios"),
+          "un nombre normal es valido");
+    CHECK(!CrearCarpeta::nombreValido(""), "el nombre vacio no es valido");
+    CHECK(!CrearCarpeta::nombreValido("."), "'.' no es un nombre de carpeta");
+    CHECK(!CrearCarpeta::nombreValido(".."), "'..' no es un nombre de carpeta");
+    CHECK(!CrearCarpeta::nombreValido("con/separador"),
+          "un nombre con '/' no es un nombre de carpeta");
+    CHECK(!CrearCarpeta::nombreValido("con\\separador"),
+          "un nombre con '\\' no es un nombre de carpeta");
+
+    CHECK(!CrearCarpeta::crear(nullptr, unir(proy, "Assets"), "SinProyecto").creada,
+          "sin FileManager no se crea nada");
+    CHECK(!CrearCarpeta::crear(&fm, "", "SinPadre").creada,
+          "sin carpeta padre no se crea nada");
+
+    const std::string rutaPadre = unir(proy, "Assets");
+    const unsigned long contadorAntes = sel->contadorCambios;
+    const CrearCarpeta::Resultado creadaOk =
+        CrearCarpeta::crear(&fm, rutaPadre, "Creada");
+    CHECK(creadaOk.creada && creadaOk.error.empty(),
+          "el helper crea con un nombre libre");
+    CHECK(fs::is_directory(unir(rutaPadre, "Creada")),
+          "la carpeta creada queda donde se pidio");
+    CHECK(sel->contadorCambios == contadorAntes + 1,
+          "crear una carpeta sube el contador exactamente una vez");
+
+    const unsigned long contadorTrasCrear = sel->contadorCambios;
+    const CrearCarpeta::Resultado repetida =
+        CrearCarpeta::crear(&fm, rutaPadre, "Creada");
+    CHECK(!repetida.creada, "el helper no reporta exito si el nombre se repite");
+    CHECK(repetida.error.find("Ya existe") != std::string::npos,
+          "el helper explica que el nombre ya esta en uso");
+    CHECK(sel->contadorCambios == contadorTrasCrear,
+          "un intento fallido no sube el contador");
+
+    CHECK(fm.crearCarpeta(unir(proy, "Assets/pruebas")),
+          "carpeta padre para el nombre con separador");
+    const CrearCarpeta::Resultado conSeparador =
+        CrearCarpeta::crear(&fm, rutaPadre, "pruebas/nueva");
+    CHECK(!conSeparador.creada,
+          "un nombre con separador no crea una carpeta anidada");
+    CHECK(!fs::exists(unir(proy, "Assets/pruebas/nueva")),
+          "no aparece la carpeta que el nombre pedia en otra ruta");
+
+
     // Renombrar carpeta.
     const std::string rutaRenombrada = unir(proy, "Assets/Renombrada");
     CHECK(fm.renombrar(rutaNueva, "Renombrada"), "renombrar mueve la carpeta");
@@ -176,6 +244,35 @@ int main() {
           "copiarCarpeta copia la rama");
     CHECK(fs::is_directory(unir(copiaCarpeta, "nucleo")),
           "copiarCarpeta es recursiva (nucleo existe dentro)");
+
+    // Copiar una carpeta dentro de si misma (Ctrl+arrastrar sobre una
+    // subcarpeta del propio arbol): el recorrido se copia a si mismo y se
+    // reproduce hasta que la ruta deja de caber, dejando un arbol basura a
+    // medias. Se usa un arbol propio para que el resto de la prueba no dependa
+    // de lo que quede colgando del caso anidado.
+    CHECK(fm.crearCarpeta(unir(proy, "Assets/anidado")),
+          "crea la carpeta padre del caso anidado");
+    CHECK(fm.crearCarpeta(unir(proy, "Assets/anidado/origen")),
+          "crea el origen del caso anidado");
+    CHECK(fm.crearArchivo(unir(proy, "Assets/anidado/origen/dato.txt"), "x"),
+          "archivo dentro del origen del caso anidado");
+    const std::string raizAnidada = unir(proy, "Assets/anidado/origen");
+    // Un destino que solo empieza por el nombre del origen NO esta dentro de
+    // el: el cotejo tiene que cerrar en un separador.
+    CHECK(fm.copiarCarpeta(raizAnidada, unir(proy, "Assets/anidado/origenCopia")),
+          "copiarCarpeta acepta un destino que solo empieza igual que el origen");
+    CHECK(fs::is_regular_file(unir(proy, "Assets/anidado/origenCopia/dato.txt")),
+          "la copia legitima al lado del origen esta entera");
+    const std::string anidado = unir(raizAnidada, "dentro");
+    CHECK(!fm.copiarCarpeta(raizAnidada, anidado),
+          "copiarCarpeta rechaza un destino dentro del propio origen");
+    CHECK(!fs::exists(anidado), "el destino anidado ni siquiera se crea");
+    CHECK(!fs::exists(unir(anidado, "dato.txt")),
+          "no se copia nada al destino anidado");
+    CHECK(!fm.copiarCarpeta(raizAnidada, raizAnidada),
+          "copiarCarpeta rechaza el origen sobre si mismo");
+    CHECK(contenidoDe(unir(raizAnidada, "dato.txt")) == "x",
+          "el origen queda intacto tras rechazar la copia anidada");
 
     // --- Mover (drag&drop del explorador) -----------------------------------
     // Es la operacion que usa el arrastre: por defecto mueve, con Ctrl copia.
@@ -256,6 +353,24 @@ int main() {
     CHECK(fm.buscarCarpetaPorRuta(rutaRenombrada) == nullptr,
           "tras el rescaneo la carpeta eliminada no esta en el arbol");
 
+    // --- Plantilla de script C++ (H-15: la fabrica debe viajar exportada) -----
+    // La plantilla declara la fabrica con el macro portable de exportacion,
+    // para que en Windows/MSVC la .dll la exporte y GetProcAddress la
+    // encuentre. Sin el macro la .dll compila pero el simbolo no existe y el
+    // script nunca carga (en MinGW/ELF no se nota: ahi se exporta todo solo).
+    const std::string plantilla = FileManager::plantillaScript("MiScript", false);
+    CHECK(plantilla.find("FUNSHI_COMPORTAMIENTO_EXPORT") != std::string::npos,
+          "la plantilla del script declara el macro de exportacion");
+    CHECK(plantilla.find("extern \"C\" " + std::string("FUNSHI_COMPORTAMIENTO_EXPORT")) !=
+              std::string::npos,
+          "el macro de exportacion aparece en la declaracion de la fabrica");
+    CHECK(plantilla.find("FUNSHI_CREAR_COMPORTAMIENTO") != std::string::npos,
+          "la plantilla conserva la fabrica con su nombre para GetProcAddress");
+    // El camino Java no lleva exportacion (la carga el JVM, no LoadLibrary).
+    const std::string plantillaJava = FileManager::plantillaScript("MiJava", true);
+    CHECK(plantillaJava.find("FUNSHI_COMPORTAMIENTO_EXPORT") == std::string::npos,
+          "la plantilla Java no lleva el macro de exportacion nativa");
+
     // --- Rescaneo refleja carpetas creadas FUERA del editor -----------------
     CHECK(fs::create_directory(proy / "Assets" / "DiscDirecto"),
           "carpeta sembrada externamente");
@@ -267,7 +382,10 @@ int main() {
     CHECK(fm.buscarCarpetaPorRuta(unir(proy, "Assets/DiscDirecto")) != nullptr,
           "el rescaneo incorpora carpetas creadas fuera del editor");
 
-    // --- FileSystemWatcher (inotify, solo Linux) ----------------------------
+    // --- FileSystemWatcher ----------------------------------------------------
+    // En Linux: inotify. En el resto (Windows): polling temporal sobre el mtime
+    // de la raiz, con el intervalo inyectado para ejercer el contrato sin
+    // esperar el pulso de produccion.
 #if defined(__linux__)
     const fs::path proyw = base / "proyecto_watch";
     fs::create_directories(proyw / "ok");
@@ -286,6 +404,41 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         CHECK(w.huboCambiosYConsumir(),
               "detecta cambios profundos dentro de la rama nueva");
+    }
+#else
+    const fs::path proyw = base / "proyecto_watch";
+    fs::create_directories(proyw / "ok");
+    {
+        // Intervalo corto: el contrato del polling es "un pulso periodico
+        // compara el mtime de la raiz", no la duracion del pulso.
+        FileSystemWatcher w(proyw.string(), std::chrono::milliseconds(50));
+        CHECK(!w.huboCambiosYConsumir(),
+              "sin eventos al arrancar (polling)");
+        // Un pulso completo sin tocar nada no debe inventar un cambio: la
+        // marca inicial del mtime es la de la raiz, no el epoch.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CHECK(!w.huboCambiosYConsumir(),
+              "sin cambios en la raiz el pulso no inventa eventos (polling)");
+        fs::create_directory(proyw / "nueva");
+        // La DETECCION solo es verificable donde la lectura del mtime tiene
+        // la precision del FS: con MSVC (CI Windows) se lee FILETIME (100ns)
+        // y el cambio es observable. El CRT de MinGW trae la lectura de stat
+        // (1 segundo, y su setter no aplica sobre directorios), de modo que
+        // una creacion dentro del mismo segundo que la semilla no cambia el
+        // valor leido; ahi el contrato del polling queda cubierto por la
+        // verificacion de que NO inventa eventos, y la deteccion por la
+        // corrida de CI en la plataforma real.
+#if defined(_MSC_VER)
+        bool detecto = false;
+        for (int i = 0; i < 26 && !detecto; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            detecto = w.huboCambiosYConsumir();
+        }
+        CHECK(detecto,
+              "el pulso detecta la creacion de una carpeta (polling)");
+        CHECK(!w.huboCambiosYConsumir(),
+              "la marca se consume (polling)");
+#endif
     }
 #endif
 
@@ -360,6 +513,287 @@ int main() {
               "carpeta dentro de si misma: la operacion se cancela");
         CHECK(recibidos.size() == 1,
               "una carpeta en si misma no publica evento");
+
+#ifndef _WIN32
+        // En Linux y macOS la barra invertida es un caracter LEGAL del nombre de
+        // archivo: "Assets/con\\barra.txt" es un archivo, no una ruta. Si al
+        // partir la ruta se trata como separador, el arrastre lo renombra a
+        // "barra.txt" y ademas invalida el cache de una carpeta que no existe.
+        CHECK(fm.crearCarpeta(unir(proy, "Assets/ConBarra")), "carpeta destino con barra");
+        const std::string conBarra = unir(proy, "Assets/con\\barra.txt");
+        CHECK(fm.crearArchivo(conBarra, "con barra"), "archivo con barra invertida en el nombre");
+        std::string padreReportado;
+        CHECK(soltarEnCarpeta(&fm, &bus, conBarra, unir(proy, "Assets/ConBarra"),
+                              false, &padreReportado),
+              "soltar un archivo con barra invertida lo mueve");
+        CHECK(fs::is_regular_file(unir(proy, "Assets/ConBarra/con\\barra.txt")),
+              "el archivo conserva su nombre completo (no se renombra)");
+        CHECK(!fs::exists(unir(proy, "Assets/ConBarra/barra.txt")),
+              "no aparece un archivo truncado en el destino");
+        CHECK(padreReportado == unir(proy, "Assets"),
+              "la carpeta padre reportada es la real, para invalidar su cache");
+        CHECK(recibidos.size() == 2 &&
+                  recibidos[1].rutaNueva == unir(proy, "Assets/ConBarra/con\\barra.txt"),
+              "el evento lleva la ruta nueva con la barra intacta");
+#endif
+    }
+
+    // --- Drag&Drop: invalidacion de vistas (arbol + grid) ---------------------
+    // Soltar un ARCHIVO sobre una carpeta del arbol debe:
+    //   - mover el archivo en disco
+    //   - incrementar contadorCambios (para que el arbol se rescanee)
+    //   - publicar ArchivosReubicados (para reescribir referencias de la escena)
+    {
+        EditorEventBus bus;
+        std::vector<EditorEvent> recibidos;
+        bus.subscribe([&recibidos](const EditorEvent& ev) {
+            recibidos.push_back(ev);
+        });
+
+        const std::string origenArchivo = unir(proy, "Assets/archivo_suelto.txt");
+        const std::string destinoCarpeta = unir(proy, "Assets/Meshes");
+        CHECK(fm.crearArchivo(origenArchivo, "contenido"), "archivo para arrastrar al arbol");
+
+        // Estado antes: contadorCambios actual
+        FileSelection* sel = fm.getSelection();
+        unsigned long contadorAntes = sel->contadorCambios;
+
+        CHECK(soltarEnCarpeta(&fm, &bus, origenArchivo, destinoCarpeta, false),
+              "soltar archivo sobre carpeta del arbol mueve el archivo");
+
+        // Verificar disco
+        CHECK(!fs::exists(origenArchivo), "archivo ya no existe en origen");
+        CHECK(fs::is_regular_file(unir(destinoCarpeta, "archivo_suelto.txt")),
+              "archivo existe en destino");
+
+        // Verificar evento
+        CHECK(recibidos.size() == 1, "mover archivo publica un evento");
+        CHECK(recibidos[0].type == EditorEventType::ArchivosReubicados,
+              "evento es ArchivosReubicados");
+
+        // Verificar que contadorCambios subio (invalida arbol)
+        CHECK(sel->contadorCambios == contadorAntes + 1,
+              "contadorCambios incrementa al mover archivo (invalida arbol)");
+
+        // Verificar que el arbol rescaneado refleja el cambio (carpeta Meshes sigue ahi)
+        fm.refrescar();
+        CHECK(fm.buscarCarpetaPorRuta(destinoCarpeta) != nullptr,
+              "arbol rescaneado conserva la carpeta destino");
+    }
+
+    // Soltar una CARPETA sobre otra carpeta del arbol debe:
+    //   - mover la carpeta con TODO su subarbol (hijos, nietos)
+    //   - incrementar contadorCambios
+    //   - publicar ArchivosReubicados con la ruta de la carpeta (prefijo)
+    //   - tras refrescar, el arbol tiene la carpeta en la nueva ubicacion
+    {
+        EditorEventBus bus;
+        std::vector<EditorEvent> recibidos;
+        bus.subscribe([&recibidos](const EditorEvent& ev) {
+            recibidos.push_back(ev);
+        });
+
+        const std::string ramaOrigen = unir(proy, "Assets/RamaAMover");
+        CHECK(fm.crearCarpeta(ramaOrigen), "crea carpeta origen");
+        CHECK(fm.crearCarpeta(unir(ramaOrigen, "hijo")), "crea subcarpeta");
+        CHECK(fm.crearCarpeta(unir(ramaOrigen, "hijo/nieto")), "crea sub-subcarpeta");
+        CHECK(fm.crearArchivo(unir(ramaOrigen, "hijo/nieto/dato.txt"), "x"),
+              "archivo en nivel profundo");
+
+        const std::string destinoCarpeta = unir(proy, "Assets/Meshes");
+        FileSelection* sel = fm.getSelection();
+        unsigned long contadorAntes = sel->contadorCambios;
+
+        CHECK(soltarEnCarpeta(&fm, &bus, ramaOrigen, destinoCarpeta, false),
+              "soltar carpeta sobre carpeta del arbol mueve la rama");
+
+        // Verificar disco: origen desaparecio, destino tiene la rama completa
+        CHECK(!fs::exists(ramaOrigen), "carpeta origen ya no existe");
+        const std::string ramaNueva = unir(destinoCarpeta, "RamaAMover");
+        CHECK(fs::is_directory(ramaNueva), "carpeta movida existe en destino");
+        CHECK(fs::is_regular_file(unir(ramaNueva, "hijo/nieto/dato.txt")),
+              "subarbol completo se movio (archivo profundo existe)");
+
+        // Verificar evento: rutaAnterior = ramaOrigen, rutaNueva = ramaNueva
+        CHECK(recibidos.size() == 1, "mover carpeta publica un evento");
+        CHECK(recibidos[0].rutaAnterior == ramaOrigen, "evento lleva ruta anterior");
+        CHECK(recibidos[0].rutaNueva == ramaNueva, "evento lleva ruta nueva");
+
+        // Verificar contadorCambios
+        CHECK(sel->contadorCambios == contadorAntes + 1,
+              "contadorCambios incrementa al mover carpeta");
+
+        // Verificar arbol rescaneado
+        fm.refrescar();
+        CHECK(fm.buscarCarpetaPorRuta(ramaNueva) != nullptr,
+              "arbol rescaneado tiene la carpeta en nueva ubicacion");
+        CHECK(fm.buscarCarpetaPorRuta(unir(ramaNueva, "hijo")) != nullptr,
+              "arbol rescaneado tiene subcarpeta");
+        CHECK(fm.buscarCarpetaPorRuta(unir(ramaNueva, "hijo/nieto")) != nullptr,
+              "arbol rescaneado tiene sub-subcarpeta (subarbol completo)");
+        CHECK(fm.buscarCarpetaPorRuta(ramaOrigen) == nullptr,
+              "arbol rescaneado ya no tiene la ruta vieja");
+    }
+
+    // --- Renombre por click derecho: helper compartido arbol/grid ------------
+    // Renombrar no cambia de carpeta: la ruta nueva es hermana de la vieja. El
+    // disco lo hace FileManager (que rechaza separadores en el nombre) y el
+    // exito se avisa una sola vez, porque de ese evento depende que la escena
+    // reescriba las referencias que apuntaban a la ruta vieja.
+    {
+        CHECK(RenombrarElemento::rutaConNombreNuevo("a/b/c.txt", "d.txt") ==
+                  "a/b/d.txt",
+              "la ruta nueva es hermana de la vieja");
+        CHECK(RenombrarElemento::rutaConNombreNuevo("suelto.txt", "otro.txt") ==
+                  "otro.txt",
+              "sin separadores, la ruta nueva es el nombre nuevo");
+#ifdef _WIN32
+        // En Windows el motor mezcla separadores: la parte de carpeta se
+        // conserva byte a byte, no se reescribe con el separador nativo.
+        CHECK(RenombrarElemento::rutaConNombreNuevo("C:\\a\\b", "c") ==
+                  "C:\\a\\c",
+              "el separador de la ruta original se conserva");
+#endif
+        EditorEventBus bus;
+        std::vector<EditorEvent> recibidos;
+        bus.subscribe([&recibidos](const EditorEvent& ev) {
+            recibidos.push_back(ev);
+        });
+
+        const std::string carpetaVieja = unir(proy, "Assets/Renombrable");
+        CHECK(fm.crearCarpeta(carpetaVieja), "carpeta para renombrar");
+        CHECK(fm.crearArchivo(unir(carpetaVieja, "dato.txt"), "x"),
+              "contenido de la carpeta a renombrar");
+
+        CHECK(RenombrarElemento::ejecutar(&fm, &bus, carpetaVieja, "Renombrada"),
+              "renombrar la carpeta se completa");
+        const std::string carpetaNueva =
+            RenombrarElemento::rutaConNombreNuevo(carpetaVieja, "Renombrada");
+        CHECK(recibidos.size() == 1, "renombrar publica un unico evento");
+        CHECK(recibidos.size() == 1 &&
+                  recibidos[0].type == EditorEventType::ArchivosReubicados,
+              "el evento es ArchivosReubicados");
+        CHECK(recibidos.size() == 1 && recibidos[0].rutaAnterior == carpetaVieja,
+              "el evento lleva la ruta anterior");
+        CHECK(recibidos.size() == 1 && recibidos[0].rutaNueva == carpetaNueva,
+              "el evento lleva la ruta nueva");
+        CHECK(fs::is_directory(carpetaNueva),
+              "renombrar renombra la carpeta en disco");
+        CHECK(!fs::exists(carpetaVieja), "la ruta vieja ya no existe");
+        CHECK(fs::is_regular_file(unir(carpetaNueva, "dato.txt")),
+              "renombrar arrastra el contenido de la carpeta");
+
+        // El arbol vigente refleja el nombre nuevo tras el rescaneo.
+        fm.refrescar();
+        CHECK(fm.buscarCarpetaPorRuta(carpetaNueva) != nullptr,
+              "tras el rescaneo el arbol tiene la carpeta con el nombre nuevo");
+        CHECK(fm.buscarCarpetaPorRuta(carpetaVieja) == nullptr,
+              "tras el rescaneo la ruta vieja no esta en el arbol");
+
+        // Rechazos: nada de esto toca disco ni publica.
+        CHECK(!RenombrarElemento::ejecutar(&fm, &bus, carpetaNueva, ""),
+              "un nombre vacio no renombra");
+        CHECK(!RenombrarElemento::ejecutar(&fm, &bus, carpetaNueva, "a/b"),
+              "un nombre con separadores no renombra (no crea una ruta nueva)");
+        CHECK(!RenombrarElemento::ejecutar(&fm, &bus, carpetaNueva, "Renombrada"),
+              "el mismo nombre no es un cambio");
+        CHECK(recibidos.size() == 1,
+              "los renombres rechazados no publican evento");
+        CHECK(fs::is_directory(carpetaNueva),
+              "los rechazos dejan la carpeta intacta");
+
+        // Renombrar no pisa un destino existente (mismo criterio que mover):
+        // rename reemplazaria en silencio el archivo destino y se perderia su
+        // contenido con un renombre accidental. Se permite el renombre al MISMO
+        // elemento (cambiar mayusculas/minusculas) mediante equivalent.
+        const std::string destinoProtegido = unir(proy, "Assets/protegido.txt");
+        const std::string archivoARenombrar = unir(proy, "Assets/cambiable.txt");
+        CHECK(fm.crearArchivo(destinoProtegido, "conservar"),
+              "archivo destino que no debe tocarse");
+        CHECK(fm.crearArchivo(archivoARenombrar, "cambiar"),
+              "archivo fuente para el renombre rechazado");
+        CHECK(!RenombrarElemento::ejecutar(&fm, &bus, archivoARenombrar,
+                                           "protegido.txt"),
+              "renombrar se niega a pisar un archivo existente");
+        CHECK(contenidoDe(destinoProtegido) == "conservar",
+              "el archivo existente quedo intacto tras el renombre rechazado");
+        CHECK(fs::is_regular_file(archivoARenombrar),
+              "el origen sigue en su sitio tras el renombre rechazado");
+        CHECK(recibidos.size() == 1,
+              "el renombre a un destino ocupado no publica evento");
+    }
+
+    // --- Selector de caras del cubemap: filtro y validacion ------------------
+    // La logica del modal vive en funciones puras aparte del dibujo, para poder
+    // ejercitarla sin ventana. Cubre las dos condiciones que hacen que el motor
+    // descarte el cubemap sin avisar en pantalla: una cara sin asignar y dos
+    // caras que no midan lo mismo.
+    {
+        CHECK(SelectorArchivoCubemap::esImagenCubemap("cielo_px.png"),
+              "una .png sirve como cara del cubemap");
+        CHECK(SelectorArchivoCubemap::esImagenCubemap("cielo_px.PNG"),
+              "el filtro no distingue mayusculas");
+        CHECK(SelectorArchivoCubemap::esImagenCubemap("a/b/cielo.tga"),
+              "una .tga anidada en carpetas sirve");
+        CHECK(SelectorArchivoCubemap::esImagenCubemap("cielo.hdr"),
+              "una .hdr sirve");
+        CHECK(!SelectorArchivoCubemap::esImagenCubemap("cielo.obj"),
+              "una malla no es una cara del cubemap");
+        CHECK(!SelectorArchivoCubemap::esImagenCubemap("notas.txt"),
+              "un texto no es una cara del cubemap");
+        CHECK(!SelectorArchivoCubemap::esImagenCubemap("cielo"),
+              "un archivo sin extension no es una cara");
+
+        const std::string vacias[6] = {"", "", "", "", "", ""};
+        CHECK(SelectorArchivoCubemap::carasSinAsignar(vacias) == 6,
+              "sin nada asignado faltan las seis caras");
+
+        const SelectorArchivoCubemap::Dimensiones iguales[6] = {
+            {512, 512}, {512, 512}, {512, 512},
+            {512, 512}, {512, 512}, {512, 512},
+        };
+        CHECK(SelectorArchivoCubemap::caraConDimensionDistinta(iguales) == -1,
+              "seis caras de las mismas dimensiones no se descartan");
+
+        // El caso que la comparacion por peso de archivo nocia: dos archivos con
+        // distinto peso pero los mismos pixeles. Con el criterio de pixeles no
+        // hay nada que avisar.
+        SelectorArchivoCubemap::Dimensiones mismoTamano[6];
+        for (int i = 0; i < 6; ++i) mismoTamano[i] = {1024, 1024};
+        CHECK(SelectorArchivoCubemap::caraConDimensionDistinta(mismoTamano) == -1,
+              "caras con los mismos pixeles no se descartan aunque pesen distinto");
+
+        // Una cara exportada a otra resolucion: el motor descarta el cubemap
+        // entero, asi que el selector avisa cual es.
+        SelectorArchivoCubemap::Dimensiones dispares[6];
+        for (int i = 0; i < 6; ++i) dispares[i] = {512, 512};
+        dispares[3] = {256, 256};
+        CHECK(SelectorArchivoCubemap::caraConDimensionDistinta(dispares) == 3,
+              "avisa la cara cuya resolucion no coincide");
+
+        // Ancho y alto se comparan por separado: 512x256 no es lo mismo que
+        // 256x512 aunque los dos produzcan el mismo numero de pixeles.
+        SelectorArchivoCubemap::Dimensiones transpuesta[6];
+        for (int i = 0; i < 6; ++i) transpuesta[i] = {512, 256};
+        transpuesta[1] = {256, 512};
+        CHECK(SelectorArchivoCubemap::caraConDimensionDistinta(transpuesta) == 1,
+              "avisa una cara transpuesta aunque tenga igual cantidad de pixeles");
+
+        // Una cara que no se pudo medir (no existe, o formato que no se pudo
+        // leer) queda en 0x0 y no falsea la comparacion.
+        SelectorArchivoCubemap::Dimensiones conIlegible[6];
+        for (int i = 0; i < 6; ++i) conIlegible[i] = {512, 512};
+        conIlegible[5] = {};
+        CHECK(SelectorArchivoCubemap::caraConDimensionDistinta(conIlegible) == -1,
+              "una cara ilegible no se reporta como dimension distinta");
+
+        // Si la +X no se pudo medir no hay contra que comparar: el motor igual
+        // va a avisar por su cuenta al no poder decodificar.
+        SelectorArchivoCubemap::Dimensiones sinReferencia[6];
+        for (int i = 0; i < 6; ++i) sinReferencia[i] = {512, 512};
+        sinReferencia[0] = {};
+        CHECK(SelectorArchivoCubemap::caraConDimensionDistinta(sinReferencia) == -1,
+              "sin dimensiones de la +X no se reporta desajuste");
     }
 
     // --- Resultado ----------------------------------------------------------

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,9 +59,10 @@ std::string directorioEjecutable() {
 }
 
 // Ruta del logo del motor (busqueda identica a IconosGUI: junto al ejecutable
-// o un nivel arriba, y fallback relativo al cwd).
+// o un nivel arriba, y fallback relativo al cwd). El logo esta en
+// Imagenes/Logo/.
 std::string ubicarLogoVentana() {
-    const char* nombre = "FunshiEngineGL_Isotipo_Blanco.png";
+    const char* nombre = "Logo/FunshiEngineGL_Isotipo_Blanco.png";
     const std::string exeDir = directorioEjecutable();
     std::vector<std::string> carpetas;
     if (!exeDir.empty()) {
@@ -134,59 +135,47 @@ int Ventana::getHeight() const {
 int Ventana::initVentana() {
     if (!glfwInit()) return -1;
 
-    // El engine pide un contexto 3.3 core: todo el render es moderno (shaders,
-    // VBO/VAO, FBO) y no queda ninguna llamada a estado fijo, asi que el perfil
-    // de compatibilidad no aporta nada y solo suma funciones deprecated que
-    // podrian tapar un camino moderno mal migrado. 3.3 es el piso que exige
-    // GLSL 330 (layout in/out). Si el driver no puede darlo, glfwCreateWindow
-    // devuelve null y se aborta con un mensaje claro en vez de seguir hasta que
-    // falle el primer dibujo.
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    // Forward compatible: descarta el codigo deprecated que un driver podria
-    // exponer por extensions y mantiene el contexto en 3.3 core puro.
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+    // La ventana no pide contexto grafico: se crea con GLFW_NO_API, que es
+    // justamente lo que necesitan las APIs que traen su propio contexto
+    // (Vulkan y su superficie). El motor no exige ninguna version de ninguna
+    // API: el backend activo es el que sabe que necesita, y si no lo puede
+    // arrancar lo dice el mismo (init() devuelve false).
+    //
+    // El suavizado de lineas no se pide aqui: el multisample es una propiedad
+    // del framebuffer final, que en una API con swapchain lo decide el backend
+    // y en una API sin swapchain no existe.
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    // Antialiasing por multisampling (4x): el contexto por defecto de GLFW se
-    // crea sin samples y las lineas (grilla, ejes, wireframes) se ven
-    // escalonadas ("a dientes"). Con MSAA el framebuffer se suaviza entero.
-    glfwWindowHint(GLFW_SAMPLES, 4);
     window = glfwCreateWindow(width, height, "FunshiEngineGL", nullptr, nullptr);
     if (!window) {
-        // Driver sin framebuffer multisampleado: se reintenta sin MSAA antes
-        // de abortar (la escena se dibuja igual, solo sin suavizado de lineas).
-        glfwWindowHint(GLFW_SAMPLES, 0);
-        window = glfwCreateWindow(width, height, "FunshiEngineGL", nullptr, nullptr);
-        if (!window) {
-            std::cerr << "[Ventana] No se pudo crear un contexto OpenGL 3.3 core."
-                      << " El driver de la GPU no lo soporta o esta actualizado."
-                      << std::endl;
-            glfwTerminate();
-            return -1;
-        }
+        std::cerr << "[Ventana] No se pudo crear la ventana del motor."
+                  << std::endl;
+        glfwTerminate();
+        return -1;
     }
-    glfwMakeContextCurrent(window);
     // El icono de la barra de titulo (junto al nombre de la aplicacion) se
     // puede fijar con o sin contexto actual; se aplica apenas la ventana
     // existe para que el WM lo muestre desde el primer frame.
     aplicarIconoVentana(window);
-    // Carga de las funciones modernas de GL por puntero. Se hace aqui, con el
-    // contexto ya activo, y no es opcional: si falta alguna, el engine no sabe
-    // dibujar. Los renderers igual la consultan por available() antes de su
-    // primer uso, pero llegar hasta aca sin las funciones seria un fallo
-    // silencioso en pantalla negra.
-    if (!Rendering::Backend::activeBackend().init()) {
-        std::cerr << "[Ventana] El driver no expone las funciones de OpenGL 3.3 "
-                     "que el engine necesita (shaders, VBO/VAO, uniforms)."
+    // Arranque del backend grafico. No es opcional: si el backend no puede
+    // inicializarse (falta el driver, la API no esta instalada, la superficie
+    // no se pudo crear) el motor no sabe dibujar, y seguir hasta el primer
+    // draw seria una pantalla negra sin explicacion. Los renderers igual
+    // consultan available() antes de su primer uso, pero llegar hasta aca sin
+    // backend seria un fallo silencioso.
+    //
+    // El backend recibe la ventana porque es quien crea la superficie sobre la
+    // que dibuja: la ventana ya no pide contexto grafico.
+    if (!Rendering::Backend::activeBackend().init(window)) {
+        std::cerr << "[Ventana] El backend grafico no se pudo inicializar."
                   << std::endl;
         glfwDestroyWindow(window);
         window = nullptr;
         glfwTerminate();
         return -1;
     }
-    // Info del contexto (GPU, versiones, perfil): lo reporta el backend; aca
-    // solo se imprime para los logs de arranque.
+    // Info del contexto (GPU, API, version): lo reporta el backend; aca solo
+    // se imprime para los logs de arranque.
     std::cout << Rendering::Backend::activeBackend().diagnosticoGPU()
               << std::endl;
     return 0;

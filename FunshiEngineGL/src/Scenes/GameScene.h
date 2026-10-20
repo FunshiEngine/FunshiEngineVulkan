@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,8 +30,10 @@
 #include "../Behaviour/ScriptGameObject.h"
 #include "../Input/InputScripts.h"
 #include "../Configuracion/Apariencia.h"
+#include "../Configuracion/DimensionProyecto.h"
 #include "../Audio/AudioClipsManager.h"
-
+#include "../WebUI/VistasWebUI.h"
+#include "../WebUI/EstadoInterfaces.h"
 class CameraComponent;
 class EditorController;
 class Transform;
@@ -48,8 +50,6 @@ class TextureManager;
 class Script;
 class SceneRenderer;
 class AudioEngine;
-class CanvasInterface;
-class CreadorDeInterfaces;
 class MiniAudioBackend;
 class GizmoController;
 
@@ -110,6 +110,12 @@ private:
     // transicion play->editor). La gobierna main desde el orquestador de
     // estados (funcion de marco de F5/F6/F7).
     bool simulacionPausada = false;
+    bool modoJuego = false;
+    bool resetSimulacionPendiente = false;
+    int camaraActivaAlIniciar = -1;
+    std::string directorioEscena_;
+    std::string directorioSnapshot_;
+    std::string indiceSnapshot_;
     bool menuActivo = false;
     // Sensibilidad global del mouse look, sincronizada desde MenuGUI (vista
     // Opciones). La aplica main al offset del raton antes de updateYaw().
@@ -128,14 +134,45 @@ private:
     // gameScene() a su propio modulo. Se construye en el cuerpo del ctor (la
     // seleccion la inyecta GUIManager en el cuerpo) y vive toda la escena.
     std::unique_ptr<GizmoController> gizmoController_;
+    // Vistas web vivas de las interfaces de juego activas (una por interfaz):
+    // pintarInterfacesJuego() las carga/avanza/descarga. La GUI las dibuja con
+    // el handle de textura que entrega el runtime web; el backend nulo no
+    // produce textura, asi que no se dibuja nada hasta que exista un backend
+    // real.
+    VistasWebUI vistasWebUI_;
+    // Estado JSON de cada interfaz viva (lo que el motor entrega a la interfaz y
+    // lo que esta devuelve). Los scripts lo manipulan via la tabla de servicios;
+    // pintarInterfacesJuego() lo sincroniza con las vistas.
+    EstadoInterfaces estadoInterfaces_;
+    // Dimension del proyecto (2D plano / 3D con profundidad). La fija main y el
+    // gestor de proyectos antes de cargar la escena; gobierna la siembra de la
+    // grilla, la posicion de la camara inicial y (fase de render) el modo 2D.
+    DimensionProyecto dimensionProyecto = DimensionProyecto::TresD;
 
     void asegurarGrilla();
+    void configurarResolverObjetosScripts();
+    void configurarResolverObjetosEditor(); // Resolver para modo editor (serializacion, drag&drop)
     // Reproduce/detiene los AudioSource de la escena en las transiciones de
     // modo play (entrar = autoplay de los marcados; salir = detener todo).
     void sincronizarAudioPlay(bool entrarEnPlay);
+    bool guardarSnapshotSimulacion();
+    bool snapshotSimulacionDisponible() const;
+    bool restaurarSnapshotSimulacion();
+    void eliminarSnapshotSimulacion() noexcept;
+    void limpiarRuntimeSimulacion();
     // Muestra las vistas previas del SceneRenderer (textura FBO por camara con
     // "Vista previa" activo) como ventanas ImGui.
     void pintarViewportsGUI();
+
+    // Dibuja el overlay de las interfaces de juego (HUD) de la escena. Se llama
+    // desde gameScene() para que exista tambien en el juego exportado, donde no
+    // hay GUI del editor.
+    void pintarInterfacesJuego();
+
+    // Ventana dockable con la vista web de la interfaz del objeto seleccionado
+    // (preview del editor). Solo corre con GUI del editor; en el juego
+    // exportado no hay seleccion ni ventana.
+    void pintarVistaInterfaz();
 
     // Cola de compilacion de scripts (play mode). Cada script se agenda y se
     // procesa en DOS fases para que la barra de estado muestre "Compilando X
@@ -173,10 +210,12 @@ public:
     ListaDE<GameObject*>* getGameObjectsScene();
     void saveScene(const std::string& filename);
     bool isStart();
-    // Fuente de verdad de la simulacion: la maquina de estados (F5/F7) la
-    // refleja aca desde el input (EditorInput), compartida con el boton
-    // Activar/Detener del menu de escena.
+    // Reflejo del estado del orquestador; la escena solo ejecuta los ciclos
+    // de simulacion y limpieza asociados a sus transiciones.
     void setStart(bool activo) noexcept;
+    void setModoJuego(bool juego) noexcept;
+    void solicitarResetSimulacion() noexcept;
+    void cerrarSimulacionAntesDeGuardar();
     // Pausa (F6): congela la simulacion sin salir de play.
     bool isSimulacionPausada() const noexcept;
     void setSimulacionPausada(bool pausada) noexcept;
@@ -188,6 +227,8 @@ public:
     void GUI();
     void pintarVentanaCamaras();
     void update(float deltaTime);
+    void registrarTeclaScript(int key, int action);
+    void registrarMouseScript(double x, double y);
     void gameScene();
     void setGizmoOperation(int operation);
     int getGizmoOperation() const;
@@ -219,6 +260,11 @@ public:
     // The navigation FPS (WASD + mouse) opera sobre esta camara.
     CameraComponent* getActiveCamera();
 
+    // Dimension del proyecto (2D plano / 3D con profundidad). Se fija ANTES de
+    // cargar la escena: la siembra (grilla y camara inicial) depende de ella.
+    void setDimension(DimensionProyecto dimension) noexcept;
+    DimensionProyecto getDimensionProyecto() const noexcept;
+
     // Cambia la camara activa (por la que se navega y se ve la escena).
     void setActiveCamera(GameObject* object);
 
@@ -233,14 +279,16 @@ public:
     // ubicarla con el gizmo. Ventana "Camaras" -> "Agregar camara".
     GameObject* agregarCamaraEnVistaActiva();
 
-    // Modo editor: interfaces (gizmo, jerarquia, settings, folders) activas
-    // si se aprieta E (toggleEditorInterfaces) o hay un objeto seleccionado.
+    // Visibilidad de los paneles del editor; E solo cambia esta bandera y no
+    // altera la seleccion ni los overlays de Depuracion.
     void toggleEditorInterfaces();
     // Activa o desactiva el modo editor sin alternar (main la enciende al
     // entrar al editor desde el menu para que los paneles sean visibles de una;
     // E la alterna durante la sesion).
     void setMenuActivo(bool activo) noexcept;
     bool isEditorActivo() const;
+    bool isEditorGUIVisible() const noexcept;
+    bool isModoJuego() const noexcept;
     void clearSelection();
 
     // Acceso al controlador del editor para comandos (undo/redo)

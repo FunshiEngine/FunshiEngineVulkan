@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,10 +27,16 @@ namespace ReflejoScripts {
 namespace {
 // Resolver activo de GameObject por nombre (lo fija la escena en play mode).
 ResolverObjeto g_resolver;
+// Resolucion de referencias a componentes (TagTipo::Componente).
+ResolverComponentes g_resolverComp;
 } // namespace
 
 void fijarResolverObjetos(ResolverObjeto resolver) {
     g_resolver = std::move(resolver);
+}
+
+void fijarResolverComponentes(ResolverComponentes resolvers) {
+    g_resolverComp = std::move(resolvers);
 }
 
 const char* nombreDeTag(TagTipo tag) {
@@ -51,6 +57,7 @@ const char* nombreDeTag(TagTipo tag) {
         case TagTipo::Grupos: return "Grupos";
         case TagTipo::Objeto: return "Objeto";
         case TagTipo::Objetos: return "Objetos";
+        case TagTipo::Componente: return "Componente";
     }
     return "Desconocido";
 }
@@ -79,6 +86,7 @@ ValorCampo valorPorDefecto(TagTipo tag) {
         case TagTipo::Objetos:
             valor.contenido = std::vector<std::string>{};
             break;
+        case TagTipo::Componente: valor.contenido = std::string{}; break;
     }
     return valor;
 }
@@ -184,6 +192,15 @@ ValorCampo leerCampo(const DefCampo& def, void* instancia) {
             for (GameObject* elemento : *arreglo)
                 nombres.push_back(elemento ? elemento->inputName : "");
             valor.contenido = std::move(nombres);
+            break;
+        }
+        case TagTipo::Componente: {
+            void** puntero = static_cast<void**>(def.acceder(instancia));
+            void* componente = puntero ? *puntero : nullptr;
+            valor.contenido =
+                (componente && g_resolverComp.dueno)
+                    ? g_resolverComp.dueno(componente, def.tipoComponente)
+                    : std::string{};
             break;
         }
     }
@@ -304,6 +321,15 @@ void escribirCampo(const DefCampo& def, void* instancia,
                 arreglo->push_back(nombre.empty() || !g_resolver
                                        ? nullptr
                                        : g_resolver(nombre));
+            break;
+        }
+        case TagTipo::Componente: {
+            void** puntero = static_cast<void**>(def.acceder(instancia));
+            const std::string& nombre = valor.como<std::string>();
+            *puntero = (nombre.empty() || !g_resolverComp.resolver)
+                           ? nullptr
+                           : g_resolverComp.resolver(
+                                 nombre, def.tipoComponente);
             break;
         }
     }
@@ -450,6 +476,7 @@ void escribirValor(std::ofstream& out, const ValorCampo& valor) {
                 [](std::ofstream& o, const std::string& e) { escribirCadena(o, e); },
                 valor.como<std::vector<std::string>>());
             break;
+        case TagTipo::Componente: escribirCadena(out, valor.como<std::string>()); break;
     }
 }
 
@@ -607,6 +634,7 @@ void leerValor(std::ifstream& in, ValorCampo& valor) {
             valor.contenido = std::move(lista);
             break;
         }
+        case TagTipo::Componente: valor.contenido = leerCadena(in); break;
     }
 }
 } // namespace

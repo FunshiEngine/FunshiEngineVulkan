@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,20 +21,31 @@
 // instancia (incl. grupos anidados, vectores de grupos, vectores de primitivas)
 // y round-trip de la serializacion binaria (con reordenamiento/campos nuevos).
 // Sin pila grafica: se ejercita el arbol ValorCampo/DefCampo directamente.
+// Incluye ademas los CONTRATOS headless de BackendCpp: los flags con que se
+// compila el script C++ (CRT, familia de compilador, citado de rutas) y el
+// comando de sondeo de toolchain (dispositivo nulo de la plataforma).
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
 #include "TempPruebas.h"
+#include "../FunshiEngineGL/src/Behaviour/Backends/ComandoCompilacionCpp.h"
+#include "../FunshiEngineGL/src/Behaviour/Backends/RutaCabecerasScript.h"
+#include "../FunshiEngineGL/src/Behaviour/Backends/ResolucionJdk.h"
+#include "../FunshiEngineGL/src/Behaviour/Backends/SondeoToolchain.h"
 #include "../FunshiEngineGL/src/Behaviour/IScriptBehaviour.h"
+#include "../FunshiEngineGL/src/Behaviour/ScriptAudioHandles.h"
+#include "../FunshiEngineGL/src/Input/InputScripts.h"
 
 using namespace ReflejoScripts;
+namespace fs = std::filesystem;
 
 int total = 0;
 int fallos = 0;
@@ -77,6 +88,23 @@ struct Oleada {
     REFLECT_INICIO(Oleada)
     REFLECT_CAMPO(conteo)
     REFLECT_CAMPO(espaciado)
+    REFLECT_FIN
+};
+
+// Tipo destino de una referencia a componente (TagTipo::Componente). La
+// reflexion lo trata como puntero opaco: solo guarda el nombre del objeto dueno.
+struct RecursoHUD {};
+
+class ComportamientoConHUD : public IScriptBehaviour {
+public:
+    RecursoHUD* panel = nullptr;
+
+    void onStart(GameObject*) override {}
+    void onUpdate(GameObject*, float) override {}
+    void onStop(GameObject*) override {}
+
+    REFLECT_INICIO(ComportamientoConHUD)
+    REFLECT_COMPONENTE(panel, "InterfaceComponent")
     REFLECT_FIN
 };
 
@@ -253,6 +281,17 @@ static void testObjetoResolucion() {
     escribirCampo(defs[15], &b, v);
     CHECK(b.objetivo == nullptr, "resolver sin el objeto devuelve nulo");
 
+    GameObject* camara =
+        reinterpret_cast<GameObject*>(static_cast<std::uintptr_t>(0x1234));
+    fijarResolverObjetos([camara](const std::string& nombre) {
+        return nombre == "Camara" ? camara : nullptr;
+    });
+    v.contenido = std::string("Camara");
+    escribirCampo(defs[15], &b, v);
+    CHECK(b.objetivo == camara,
+          "referencia a GameObject se resuelve por nombre");
+    fijarResolverObjetos(nullptr);
+
     // Vector de objetos: nombres -> punteros nulos.
     std::vector<std::string> nombres{"A", "B"};
     ValorCampo vL = valorPorDefecto(defs[16]);
@@ -261,6 +300,81 @@ static void testObjetoResolucion() {
     CHECK(b.enemigos.size() == 2 && b.enemigos[0] == nullptr &&
               b.enemigos[1] == nullptr,
           "vector de objetos resuelto a nulos");
+}
+
+static void testComponenteResolucion() {
+    const std::vector<DefCampo>& defs = ComportamientoConHUD::reflexion();
+    CHECK(defs.size() == 1 && defs[0].tag == TagTipo::Componente,
+          "el campo de componente se refleja con su tag");
+    CHECK(defs[0].tipoComponente == "InterfaceComponent",
+          "el campo conserva el nombre del tipo de componente");
+
+    ComportamientoConHUD b;
+
+    // Sin resolvers: el nombre no tiene a quien apuntar => nullptr.
+    fijarResolverComponentes(ResolverComponentes{});
+    ValorCampo v = valorPorDefecto(defs[0]);
+    v.contenido = std::string("Panel");
+    escribirCampo(defs[0], &b, v);
+    CHECK(b.panel == nullptr, "sin resolver el componente queda nulo");
+
+    RecursoHUD componente;
+    fijarResolverComponentes(ResolverComponentes{
+        [&componente](const std::string& nombre,
+                      const std::string& tipo) -> void* {
+            return (nombre == "Panel" && tipo == "InterfaceComponent")
+                       ? static_cast<void*>(&componente)
+                       : nullptr;
+        },
+        [&componente](const void* puntero, const std::string&) -> std::string {
+            return puntero == static_cast<const void*>(&componente)
+                       ? std::string("Panel")
+                       : std::string{};
+        }});
+
+    escribirCampo(defs[0], &b, v);
+    CHECK(b.panel == &componente,
+          "el componente se resuelve por nombre de objeto + tipo");
+
+    ValorCampo leido = leerCampo(defs[0], &b);
+    CHECK(leido.tag == TagTipo::Componente &&
+              leido.como<std::string>() == "Panel",
+          "leer el componente devuelve el nombre del objeto dueno");
+
+    // Round-trip binario: se persiste el nombre del dueno, no el puntero.
+    TempPruebas::CarpetaPrueba carpeta("funshi_reflexion_componente");
+    const std::filesystem::path ruta = carpeta.ruta() / "componente.bin";
+    {
+        std::ofstream out(ruta, std::ios::binary | std::ios::trunc);
+        CHECK(out.good(), "abrir archivo temporal de componente");
+        std::vector<ValorCampo> valores{leido};
+        guardarValoresCampos(out, valores);
+        out.close();
+    }
+    {
+        std::ifstream in(ruta, std::ios::binary);
+        std::vector<ValorCampo> cargados = cargarValoresCampos(in, defs);
+        CHECK(cargados.size() == 1 &&
+                  cargados[0].como<std::string>() == "Panel",
+              "round-trip del componente conserva el nombre del dueno");
+    }
+
+    // Un objeto inexistente deja la referencia nula.
+    v.contenido = std::string("NoExiste");
+    escribirCampo(defs[0], &b, v);
+    CHECK(b.panel == nullptr, "objeto inexistente deja el componente nulo");
+
+    // Un resolver que no encuentra nada tampoco resuelve.
+    fijarResolverComponentes(ResolverComponentes{
+        [](const std::string&, const std::string&) -> void* { return nullptr; },
+        [](const void*, const std::string&) -> std::string {
+            return std::string{};
+        }});
+    v.contenido = std::string("Panel");
+    escribirCampo(defs[0], &b, v);
+    CHECK(b.panel == nullptr, "resolver que no encuentra deja nulo");
+
+    fijarResolverComponentes(ResolverComponentes{});
 }
 
 static void testSerializacionBinaria() {
@@ -453,13 +567,616 @@ static void testAlinearValores() {
     }
 }
 
-int main() {
+static void testEntradaDeScripts() {
+    InputScripts input;
+    input.reset();
+    input.onKey(87, 1);
+    CHECK(input.sostiene("W"), "W queda sostenida tras el evento de pulsacion");
+    CHECK(input.presionada("W"), "W publica el flanco de pulsacion");
+    input.onKey(87, 2);
+    CHECK(input.sostiene("W"), "GLFW_REPEAT conserva la tecla sostenida");
+    input.avanzarFrame();
+    CHECK(input.sostiene("W") && !input.presionada("W"),
+          "avanzar el frame consume el flanco y conserva el estado sostenido");
+    input.onKey(87, 0);
+    CHECK(!input.sostiene("W") && input.soltada("W"),
+          "el evento de liberacion publica el flanco correspondiente");
+    input.onMouseMove(100.0, 100.0);
+    CHECK(input.deltaMouseX() == 0.0f && input.deltaMouseY() == 0.0f,
+          "la primera posicion del mouse solo establece el origen");
+    input.onMouseMove(106.0, 97.0);
+    CHECK(input.deltaMouseX() == 6.0f && input.deltaMouseY() == -3.0f,
+          "el delta del mouse acumula movimiento en pixeles");
+    input.avanzarFrame();
+    CHECK(input.deltaMouseX() == 0.0f && input.deltaMouseY() == 0.0f,
+          "avanzar el frame consume el delta del mouse");
+    input.reset();
+    CHECK(!input.sostiene("W") && !input.soltada("W") &&
+              input.deltaMouseX() == 0.0f && input.deltaMouseY() == 0.0f,
+          "reset elimina teclas, flancos y delta del mouse");
+    for (int digito = 0; digito <= 9; ++digito) {
+        const std::string nombre = "D" + std::to_string(digito);
+        CHECK(InputScripts::codigoDe(nombre) == 48 + digito,
+              "los digitos usan los identificadores D0-D9");
+    }
+    CHECK(InputScripts::codigoDe("0") == -1,
+          "los identificadores simples 0-9 no son aliases");
+}
+
+static void testAudioIniciadoPorScripts() {
+    ScriptAudioHandles handlesScript;
+    std::vector<int> activos = {12, 27, 33};
+    handlesScript.registrar(27);
+    handlesScript.registrar(33);
+    handlesScript.registrar(-1);
+    activos.erase(std::remove(activos.begin(), activos.end(), 33),
+                  activos.end());
+    handlesScript.retirar(33);
+    handlesScript.detenerTodos([&activos](int handle) {
+        activos.erase(std::remove(activos.begin(), activos.end(), handle),
+                      activos.end());
+    });
+    CHECK(activos == std::vector<int>({12}),
+          "al cerrar la simulacion se detienen solo los handles de scripts");
+}
+
+// --- Contrato de compilacion de los scripts C++ (CRT compartido) -------------
+// El .dll del script comparte heap con el engine a traves de la reflexion
+// (std::string, std::vector<DefCampo> y los std::function de cada campo se
+// alocan de un lado y se liberan del otro), asi que los dos modulos tienen que
+// usar el MISMO runtime de C++. Este test no puede observar la corrupcion de
+// heap (haria falta MSVC y cargar el .dll en runtime), pero si verifica el
+// contrato de flags: sin /MD el heap vuelve a separarse y el crash regresa.
+static void testContratoCompilacion() {
+    const std::string msvc =
+        CompilacionCpp::flagsFamilia(CompilacionCpp::Familia::Msvc, "MiClase");
+
+    CHECK(CompilacionCpp::tieneFlag(msvc, "/MD") ||
+              CompilacionCpp::tieneFlag(msvc, "/MDd"),
+          "MSVC: el script se compila con el CRT dinamico (/MD), nunca con el "
+          "estatico");
+    CHECK(!CompilacionCpp::tieneFlag(msvc, "/MT") &&
+              !CompilacionCpp::tieneFlag(msvc, "/MTd"),
+          "MSVC: el CRT estatico (/MT) le da a la .dll su propio heap y rompe "
+          "la ABI con el engine");
+    CHECK(CompilacionCpp::tieneFlag(msvc, CompilacionCpp::runtimeFlag()),
+          "MSVC: el flag de runtime es el mismo que usa el engine en esta "
+          "configuracion (/MD o /MDd)");
+    CHECK(CompilacionCpp::tieneFlag(msvc, "/EHsc"),
+          "MSVC: sin /EHsc la primera excepcion del script mata el proceso");
+    CHECK(msvc.find("/DFUNSHI_NOMBRE_CLASE=MiClase") != std::string::npos,
+          "MSVC: el nombre de clase del script llega por define");
+    CHECK(CompilacionCpp::tieneFlag(msvc, "/link"),
+          "MSVC: la linea termina pasando opciones al linker");
+    // H-15: el export de la fabrica queda pedido en el link para que los
+    // fuentes con el template viejo (sin FUNSHI_COMPORTAMIENTO_EXPORT)
+    // exporten igual el simbolo en MSVC, donde un extern "C" pelado no se
+    // exporta solo.
+    CHECK(msvc.find("/EXPORT:FUNSHI_CREAR_COMPORTAMIENTO") != std::string::npos,
+          "MSVC: la linea pide exportar la fabrica en el link (H-15)");
+    CHECK(!CompilacionCpp::tieneFlag(msvc, "-std=c++17"),
+          "MSVC: la linea no lleva flags de GCC");
+
+    const std::string gcc =
+        CompilacionCpp::flagsFamilia(CompilacionCpp::Familia::Gcc, "MiClase");
+
+    CHECK(CompilacionCpp::tieneFlag(gcc, "-shared"),
+          "GCC: el script se compila como biblioteca compartida");
+    CHECK(CompilacionCpp::tieneFlag(gcc, "-fPIC"),
+          "GCC: -fPIC, porque el artefacto se carga con dlopen");
+    CHECK(!CompilacionCpp::tieneFlag(gcc, "/MD") &&
+              !CompilacionCpp::tieneFlag(gcc, "/nologo") &&
+              !CompilacionCpp::tieneFlag(gcc, "/EHsc"),
+          "GCC: la linea no lleva flags de MSVC");
+
+    // H-2: la familia sale del TOOLCHAIN, no de la plataforma. Un build MinGW en
+    // Windows recibia los flags de MSVC y el script no compilaba nunca.
+    CHECK(CompilacionCpp::familiaDe("cl") == CompilacionCpp::Familia::Msvc,
+          "cl.exe es familia MSVC");
+    CHECK(CompilacionCpp::familiaDe(
+              "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/"
+              "MSVC/14.40.33807/bin/Hostx64/x64/cl.exe") ==
+              CompilacionCpp::Familia::Msvc,
+          "la ruta completa de cl.exe es familia MSVC");
+    CHECK(CompilacionCpp::familiaDe("C:/msys64/mingw64/bin/c++.exe") ==
+              CompilacionCpp::Familia::Gcc,
+          "MinGW c++.exe en Windows es familia GCC, no MSVC");
+    CHECK(CompilacionCpp::familiaDe("g++") == CompilacionCpp::Familia::Gcc,
+          "g++ es familia GCC");
+    CHECK(CompilacionCpp::familiaDe("/usr/bin/clang++") ==
+              CompilacionCpp::Familia::Gcc,
+          "clang++ es familia GCC");
+    CHECK(CompilacionCpp::familiaDe("/usr/bin/g++-14") ==
+              CompilacionCpp::Familia::Gcc,
+          "un g++ con sufijo de version sigue siendo familia GCC");
+
+    // Los ARGV del proceso hijo (H-3 nivel 2, sin shell): el include y la
+    // salida son de la familia, no de la plataforma (MinGW recibia /I, /Fo
+    // y /Fe, y no compilaba nunca). Cada token va crudo y separado — quien
+    // cita al armar la linea de Windows es Proceso::citar, y en POSIX los
+    // argumentos viajan tal cual.
+    auto contiene = [](const std::vector<std::string>& valores,
+                       const std::string& buscado) {
+        return std::find(valores.begin(), valores.end(), buscado) !=
+               valores.end();
+    };
+    auto arrancaCon = [](const std::vector<std::string>& valores,
+                         const std::string& prefijo) {
+        for (const std::string& tok : valores)
+            if (tok.rfind(prefijo, 0) == 0) return true;
+        return false;
+    };
+    auto tieneShell = [](const std::vector<std::string>& valores) {
+        for (const std::string& tok : valores)
+            if (tok.find('>') != std::string::npos ||
+                tok.find('&') != std::string::npos)
+                return true;
+        return false;
+    };
+
+    CompilacionCpp::DatosComando datos;
+    datos.nombreClase = "MiClase";
+    datos.fuente = "C:/Proyectos/Nuevo Proyecto/src/Scripts/MiClase.cpp";
+    datos.dirSrc = "C:/engine/src";
+    datos.dirObjetos = "C:/Temp/funshi_scripts";
+    datos.artefacto = "C:/Temp/funshi_scripts/script_1.dll";
+
+    datos.compilador = "C:/msys64/mingw64/bin/c++.exe";
+    const std::vector<std::string> argvMinGW =
+        CompilacionCpp::argumentosCompilacion(datos);
+    CHECK(contiene(argvMinGW, "-IC:/engine/src") && !arrancaCon(argvMinGW, "/I"),
+          "MinGW: las cabeceras entran con -I, no con /I");
+    CHECK(contiene(argvMinGW, "-o") && !arrancaCon(argvMinGW, "/Fo") &&
+              !arrancaCon(argvMinGW, "/Fe"),
+          "MinGW: la salida va con -o, no con /Fo ni /Fe");
+    CHECK(!contiene(argvMinGW, "/nologo") && contiene(argvMinGW, "-shared"),
+          "MinGW: sin flags de MSVC en ninguna parte de los argumentos");
+    CHECK(contiene(argvMinGW, datos.fuente),
+          "la ruta de un proyecto con espacios es UN SOLO argumento (el "
+          "shell de antes la cortaba en el primer espacio)");
+
+    datos.compilador = "cl.exe";
+    const std::vector<std::string> argvMsvc =
+        CompilacionCpp::argumentosCompilacion(datos);
+    CHECK(contiene(argvMsvc, "/IC:/engine/src"),
+          "MSVC: las cabeceras entran con /I");
+    CHECK(contiene(argvMsvc, "/FoC:/Temp/funshi_scripts\\") &&
+              contiene(argvMsvc, "/FeC:/Temp/funshi_scripts/script_1.dll"),
+          "el /Fo conserva la barra final que cl.exe pide para el directorio "
+          "y /Fe va pegado al artefacto");
+    CHECK(!contiene(argvMsvc, "-o") && !contiene(argvMsvc, "-shared"),
+          "MSVC: sin flags de GCC en ninguna parte de los argumentos");
+    CHECK(!tieneShell(argvMinGW) && !tieneShell(argvMsvc),
+          "los argumentos no llevan redireccion ni operadores de shell: eso "
+          "lo hace Proceso por handles/fd");
+
+    // El juego que usa ESTE build tambien cumple el contrato: la familia sale
+    // del compilador horneado por CMake (FUNSHI_CXX_COMPILER), no del SO.
+    const std::string actual = CompilacionCpp::flagsCompilador("MiClase");
+    if (CompilacionCpp::familiaCompilador() == CompilacionCpp::Familia::Msvc) {
+        CHECK(CompilacionCpp::tieneFlag(actual, CompilacionCpp::runtimeFlag()),
+              "MSVC: el build en uso compila los scripts con el runtime de C++ "
+              "del engine");
+    } else {
+        CHECK(CompilacionCpp::tieneFlag(actual, "-shared"),
+              "GCC/Clang: el build en uso compila los scripts como biblioteca "
+              "compartida");
+    }
+
+    // Comparacion por tokens: "/MD" no puede dar positivo sobre "/MDd".
+    CHECK(!CompilacionCpp::tieneFlag("/MDd /EHsc", "/MD"),
+          "el chequeo de flags compara tokens completos");
+
+    // Ruta de las cabeceras del script: absoluta en el checkout de desarrollo o
+    // relativa junto al ejecutable en la app instalada ("include"). La
+    // resolucion no toca el disco: `existe` simula que rutas son utilizables.
+    {
+        const std::string raiz = std::filesystem::temp_directory_path().string();
+        const std::string fakeExe =
+            (std::filesystem::temp_directory_path() / "funshi_fake_exe").string();
+        const std::string absoluta = raiz;
+        const std::string absolutaMala =
+            (std::filesystem::temp_directory_path() / "funshi_no_existe").string();
+        const std::string relativaBien = "include";
+        const std::string relativaSoloJuntoAlExe = "solo_junto_al_exe";
+        const std::string candidatoExe =
+            (std::filesystem::path(fakeExe) / relativaSoloJuntoAlExe).string();
+        const std::vector<std::string> existentes = {
+            absoluta, relativaBien, candidatoExe};
+
+        auto existe = [&](const std::string& ruta) {
+            return std::find(existentes.begin(), existentes.end(), ruta) !=
+                   existentes.end();
+        };
+
+        CHECK(RutaCabecerasScript::resolver("", fakeExe, existe).empty(),
+              "sin valor configurado no hay carpeta de cabeceras");
+        CHECK(RutaCabecerasScript::resolver(absoluta, fakeExe, existe) ==
+                  absoluta,
+              "una ruta absoluta existente se usa tal cual");
+        CHECK(RutaCabecerasScript::resolver(absolutaMala, fakeExe, existe)
+                  .empty(),
+              "una ruta absoluta inexistente no se devuelve muerta");
+        CHECK(RutaCabecerasScript::resolver(relativaBien, fakeExe, existe) ==
+                  relativaBien,
+              "una ruta relativa al directorio de trabajo se usa tal cual");
+        CHECK(RutaCabecerasScript::resolver(relativaSoloJuntoAlExe, fakeExe,
+                                            existe) == candidatoExe,
+              "una ruta relativa se resuelve contra la carpeta del ejecutable");
+CHECK(RutaCabecerasScript::resolver(relativaSoloJuntoAlExe, "",
+                                            existe)
+                   .empty(),
+              "sin carpeta del ejecutable no se inventa una ruta");
+    }
+
+    // Emparejamiento de libjvm y javac: tienen que salir de la MISMA raiz. Con
+    // dos raices falsas (una con JVM y otra con compilador) el emparejamiento
+    // tiene que quedarse con la primera que tenga JVM y no mezclar, porque un
+    // javac de otra version genera bytecode que la JVM rechaza y el fallo sale
+    // como "no se encontro la clase".
+    {
+        // Arbol falso: jdkA trae las dos cosas, jdkB solo la JVM, jdkC solo
+        // javac (no sirve de raiz de JVM).
+        const std::string jdkA = "/opt/jdkA";
+        const std::string jdkB = "/opt/jdkB";
+        const std::string jdkC = "/opt/jdkC";
+        auto libjvmEn = [&](const std::string& raiz) -> std::string {
+            if (raiz == jdkA) return raiz + "/lib/server/libjvm.so";
+            if (raiz == jdkB) return raiz + "/lib/server/libjvm.so";
+            return {};
+        };
+        auto javacEn = [&](const std::string& raiz) -> std::string {
+            if (raiz == jdkA) return raiz + "/bin/javac";
+            if (raiz == jdkC) return raiz + "/bin/javac";
+            return {};
+        };
+
+        const ResolucionJdk::Herramientas conPrimero =
+            ResolucionJdk::desdeRaices({jdkA, jdkB}, libjvmEn, javacEn);
+        CHECK(conPrimero.libjvm == jdkA + "/lib/server/libjvm.so" &&
+                  conPrimero.javac == jdkA + "/bin/javac" &&
+                  conPrimero.raiz == jdkA,
+              "la primera raiz con las dos herramientas manda para ambas");
+
+        const ResolucionJdk::Herramientas sinJavacPrimero =
+            ResolucionJdk::desdeRaices({jdkB, jdkA}, libjvmEn, javacEn);
+        CHECK(sinJavacPrimero.libjvm == jdkB + "/lib/server/libjvm.so" &&
+                  sinJavacPrimero.javac.empty(),
+              "una raiz sin javac no se completa con el javac de otra raiz");
+        CHECK(sinJavacPrimero.raiz == jdkB,
+              "la raiz elegida es la de la JVM, no la del compilador");
+
+        // Una raiz con javac pero sin JVM no es candidata: el .class lo tiene que
+        // ejecutar una JVM.
+        const ResolucionJdk::Herramientas soloJavac =
+            ResolucionJdk::desdeRaices({jdkC}, libjvmEn, javacEn);
+        CHECK(soloJavac.libjvm.empty() && soloJavac.javac.empty(),
+              "una raiz sin JVM no aporta nada");
+
+        CHECK(ResolucionJdk::desdeRaices({}, libjvmEn, javacEn).libjvm.empty(),
+              "sin raices no hay herramientas");
+        CHECK(ResolucionJdk::desdeRaices({"", "/opt/vacio"}, libjvmEn, javacEn)
+                      .libjvm.empty(),
+              "una raiz vacia o sin artefactos se ignora");
+
+        // Raiz deducida de la ruta de la biblioteca: sirve para el caso en que
+        // la biblioteca viene dada suelta (FUNSHI_LIBJVM, valor horneado) y hay
+        // que buscarle el javac al lado.
+        CHECK(ResolucionJdk::raizDesdeLibjvm("/opt/jdk/lib/server/libjvm.so") ==
+                  "/opt/jdk",
+              "libjvm.so POSIX: la raiz es dos niveles arriba");
+        CHECK(ResolucionJdk::raizDesdeLibjvm("C:/jdk/bin/server/jvm.dll") ==
+                  "C:/jdk",
+              "jvm.dll de Windows: la raiz sube de server y de bin");
+        CHECK(ResolucionJdk::raizDesdeLibjvm("C:/jdk/lib/jvm.lib") == "C:/jdk",
+              "el .lib de FindJNI cuelga de lib, no de bin/server");
+        CHECK(ResolucionJdk::raizDesdeLibjvm("/opt/jdk") == "/opt/jdk",
+              "una ruta que ya es de JDK se toma tal cual");
+        CHECK(ResolucionJdk::raizDesdeLibjvm("").empty(),
+              "sin ruta de biblioteca no hay raiz que deducir");
+    }
+
+    // El valor horneado por CMake es la ruta del ARCHIVO de la biblioteca, no
+    // una raiz de JDK. Pasado por la lista de raices se descartaba siempre (buscaba
+    // "<archivo>/lib/server/libjvm.so"), de modo que ni en la maquina donde se
+    // construyo el motor aportaba nada. Se comprueba que, como ultimo recurso,
+    // solo cuenta si el archivo existe aqui, y que su raiz deduce el javac.
+    {
+        const std::string horneada = "/opt/jdkH/lib/server/libjvm.so";
+        const std::string jdkH = "/opt/jdkH";
+        auto javacEn = [&](const std::string& raiz) -> std::string {
+            return raiz == jdkH ? raiz + "/bin/javac" : std::string();
+        };
+
+        const ResolucionJdk::Herramientas conHorneada =
+            ResolucionJdk::conBibliotecaHorneada({}, horneada, true, javacEn);
+        CHECK(conHorneada.libjvm == horneada && conHorneada.raiz == jdkH &&
+                  conHorneada.javac == jdkH + "/bin/javac",
+              "el valor horneado se usa si el archivo existe en esta maquina");
+
+        const ResolucionJdk::Herramientas horneadaAusente =
+            ResolucionJdk::conBibliotecaHorneada({}, horneada, false, javacEn);
+        CHECK(horneadaAusente.libjvm.empty() &&
+                  horneadaAusente.javac.empty() && horneadaAusente.raiz.empty(),
+              "el valor horneado no aporta nada si su archivo no existe");
+
+        CHECK(ResolucionJdk::conBibliotecaHorneada({}, "", true, javacEn)
+                      .libjvm.empty(),
+              "sin valor horneado no hay nada que anadir");
+
+        // Lo que ya salio de una raiz del sistema manda: el horneado es el
+        // ultimo recurso, no el primero.
+        ResolucionJdk::Herramientas desdeSistema{
+            "/usr/lib/jvm/java-17/lib/server/libjvm.so", "/usr/lib/jvm/java-17/bin/javac",
+            "/usr/lib/jvm/java-17"};
+        const ResolucionJdk::Herramientas sinPisar =
+            ResolucionJdk::conBibliotecaHorneada(desdeSistema, horneada, true, javacEn);
+        CHECK(sinPisar.libjvm == desdeSistema.libjvm && sinPisar.raiz == desdeSistema.raiz,
+              "una raiz del sistema no se reemplaza por el valor horneado");
+
+        // Una raiz sin javac al lado sigue sin javac: el emparejamiento es lo que
+        // evita el bytecode que la JVM no entiende.
+        CHECK(ResolucionJdk::conBibliotecaHorneada({}, "/opt/jreH/lib/server/libjvm.so",
+                                                    true, javacEn)
+                      .javac.empty(),
+              "el valor horneado no inventa un javac que no tiene al lado");
+    }
+
+    // Que se pueda ejecutar el javac que se paso a Proceso::ejecutar: un nombre
+    // suelto lo resuelve el PATH, una ruta tiene que existir. El fallo de "no se
+    // pudo ejecutar" no decia que lo que faltaba era un JDK.
+    {
+        TempPruebas::CarpetaPrueba carpetaJavac("funshi_scripts_javac");
+        const auto& raiz = carpetaJavac.ruta();
+        CHECK(ResolucionJdk::compiladorEjecutable("javac"),
+              "un nombre suelto lo resuelve el PATH");
+        CHECK(!ResolucionJdk::compiladorEjecutable(""),
+              "sin compilador no hay nada que ejecutar");
+        const auto javac = raiz / "javac";
+        std::ofstream(javac) << "#!/bin/sh\n";
+        CHECK(ResolucionJdk::compiladorEjecutable(javac.string()),
+              "una ruta que existe es ejecutable");
+        CHECK(!ResolucionJdk::compiladorEjecutable((raiz / "javac.exe").string()),
+              "una ruta que no existe no es ejecutable ni con extension de Windows");
+        CHECK(!ResolucionJdk::compiladorEjecutable(raiz.string()),
+              "una carpeta no es un compilador");
+    }
+
+    // Paridad instalador/motor al detectar un JDK: el .iss solo miraba
+    // bin\server\jvm.dll, asi que daba por bueno un JRE (que no trae javac) y el
+    // motor luego no podia compilar ningun .java. El predicado del instalador es
+    // Pascal Script y no se puede ejecutar fuera de Windows, asi que el contrato
+    // se comprueba sobre el propio .iss: cada deteccion de JDK pasa por el
+    // predicado que exige LAS DOS piezas, y no quedan comprobaciones sueltas de
+    // jvm.dll que puedan reintroducir el falso positivo.
+    {
+        const std::filesystem::path raizRepo =
+            std::filesystem::path(__FILE__).parent_path().parent_path();
+        const std::filesystem::path iss = raizRepo / "FunshiEngineGL" / "packaging" /
+                             "FunshiEngineGL_setup.iss";
+        std::ifstream f(iss);
+        CHECK(f.good(), "se encuentra FunshiEngineGL_setup.iss para auditarlo");
+        std::string texto((std::istreambuf_iterator<char>(f)),
+                          std::istreambuf_iterator<char>());
+
+        // Se cuentan LINEAS DE CODIGO, no texto: los comentarios del .iss
+        // mencionan jvm.dll y javac.exe al explicar el requisito.
+        int lineasJdk = 0;
+        int lineasJavac = 0;
+        int usosPredicado = 0;
+        std::istringstream flujo(texto);
+        std::string linea;
+        while (std::getline(flujo, linea)) {
+            if (linea.find("FileExists(") != std::string::npos &&
+                linea.find("jvm.dll") != std::string::npos)
+                ++lineasJdk;
+            if (linea.find("\\bin\\javac.exe") != std::string::npos)
+                ++lineasJavac;
+            if (linea.find("JdkCompletoEn(") != std::string::npos &&
+                linea.find("function") == std::string::npos)
+                ++usosPredicado;
+        }
+
+        CHECK(usosPredicado >= 4,
+              "el instalador detecta el JDK siempre por el mismo predicado "
+              "(carpetas comunes, JAVA_HOME del proceso, JAVA_HOME de la maquina "
+              "y jre embebido)");
+        CHECK(lineasJdk == 1 && lineasJavac == 1,
+              "una sola comprobacion de jvm.dll, y es la que exige tambien "
+              "bin\\javac.exe (si no, un JRE pasa por JDK y el motor no compila)");
+        CHECK(lineasJdk >= lineasJavac,
+              "el predicado del instalador no puede exigir javac y olvidar la JVM");
+    }
+
+    // vcvars64Ruta: el recorte por parent_path() tenia que terminar. En
+    // MinGW/libstdc++ `path("C:\\\\").parent_path()` devuelve `C:\\\\` (nunca
+    // vacio), asi que el bucle giraba para siempre y BackendCpp se colgaba al
+    // compilar un script en Windows+MinGW. Si estas llamadas no vuelven, el
+    // test se cuelga y ctest lo marque como timeout: esa es la senal.
+    CHECK(CompilacionCpp::vcvars64Ruta("C:/msys64/mingw64/bin/c++.exe").empty(),
+          "vcvars: un compilador GCC no busca vcvars64.bat (guarda de familia)");
+    CHECK(CompilacionCpp::vcvars64Ruta("/ruta/de/prueba/cl.exe").empty(),
+          "vcvars: una ruta MSVC inexistente recorta hasta la raiz y termina "
+          "(sin guarda el bucle era infinito)");
+    CHECK(CompilacionCpp::vcvars64Ruta("g++").empty(),
+          "vcvars: un compilador bare de familia GCC ni recorre el filesystem");
+
+    // Descubrimiento del toolset en la maquina del usuario: la ruta del
+    // compilador que hornea el build es la del runner que publico el paquete, y
+    // en el equipo del usuario no existe. El barrido se prueba con un arbol
+    // falso porque 'existe' no necesita Windows: se comprueba el contenido, no
+    // la plataforma.
+    {
+        TempPruebas::CarpetaPrueba carpetaVS("funshi_vcvars_maquina");
+        const fs::path raizVS = carpetaVS.ruta() / "VS";
+        const auto crearVcvars = [](const fs::path& visualStudio) {
+            const fs::path bat =
+                visualStudio / "VC" / "Auxiliary" / "Build" / "vcvars64.bat";
+            fs::create_directories(bat.parent_path());
+            std::ofstream(bat) << "rem falso";
+        };
+
+        CHECK(CompilacionCpp::vcvars64EnRaices(std::vector<std::string>{raizVS.string()}).empty(),
+              "vcvars: sin arbol de Visual Studio devuelve vacio (no inventa ruta)");
+
+        crearVcvars(raizVS / "2022" / "Community");
+        CHECK(CompilacionCpp::vcvars64EnRaices(std::vector<std::string>{raizVS.string()}) ==
+                  (raizVS / "2022" / "Community" / "VC" / "Auxiliary" / "Build" /
+                   "vcvars64.bat").string(),
+              "vcvars: encuentra la edicion completa bajo <raiz>/<anio>/<edicion>");
+
+        // Las Build Tools cuelgan un nivel mas abajo; si el barrido solo mirase
+        // dos niveles, el caso mas comun de toolset en una maquina de usuario
+        // no se encontraria.
+        fs::remove_all(raizVS);
+        crearVcvars(raizVS / "2022" / "BuildTools");
+        CHECK(CompilacionCpp::vcvars64EnRaices(std::vector<std::string>{raizVS.string()}) ==
+                  (raizVS / "2022" / "BuildTools" / "VC" / "Auxiliary" / "Build" /
+                   "vcvars64.bat").string(),
+              "vcvars: encuentra las Build Tools, que cuelgan igual de dos niveles");
+
+        // Con varias instalaciones gana la primera raiz: por eso el orden de
+        // raicesVisualStudio() (entorno, despues Program Files) es el orden de
+        // preferencia.
+        const fs::path raizA = fs::path(carpetaVS.ruta()) / "VS_A";
+        const fs::path raizB = fs::path(carpetaVS.ruta()) / "VS_B";
+        crearVcvars(raizB / "2022" / "Community");
+        crearVcvars(raizA / "2022" / "Enterprise");
+        CHECK(CompilacionCpp::vcvars64EnRaices(std::vector<std::string>{raizA.string(), raizB.string()}) ==
+                  (raizA / "2022" / "Enterprise" / "VC" / "Auxiliary" / "Build" /
+                   "vcvars64.bat").string(),
+              "vcvars: con varias instalaciones gana la primera raiz candidata");
+
+        CHECK(CompilacionCpp::vcvars64EnRaices(std::vector<std::string>{(fs::path(carpetaVS.ruta()) /
+                                                  "no_existe").string()})
+                  .empty(),
+              "vcvars: una raiz inexistente no lanza excepcion ni devuelve ruta");
+    }
+
+    // Que compilador se invoca. El caso que motiva esto es el paquete publicado:
+    // la ruta horneada es la del runner que compilo y no existe en el equipo del
+    // usuario, asi que invocarla era garantir un fallo. "No existe" se simula
+    // con una ruta debajo de un archivo regular (falla en cualquier SO).
+    {
+        TempPruebas::CarpetaPrueba carpetaComp("funshi_elegir_compilador");
+        const fs::path existente = carpetaComp.ruta() / "compilador_real.exe";
+        { std::ofstream(existente) << "x"; }
+        const fs::path tapon = carpetaComp.ruta() / "bloque";
+        { std::ofstream(tapon) << "x"; }
+        const std::string inexistente = (tapon / "dentro").string();
+
+        CHECK(CompilacionCpp::elegirCompilador("", existente.string(), false) ==
+                  existente.string(),
+              "compilador: con la ruta horneada presente se respeta (build de desarrollo)");
+        CHECK(CompilacionCpp::elegirCompilador("", existente.string(), true) ==
+                  existente.string(),
+              "compilador: la ruta horneada presente gana a descubrir el toolset");
+        CHECK(CompilacionCpp::elegirCompilador("", inexistente, true) == "cl",
+              "compilador: sin ruta horneada utilizable y con toolset, usa cl del PATH");
+        CHECK(CompilacionCpp::elegirCompilador("", inexistente, false) == "g++",
+              "compilador: sin ruta horneada utilizable ni toolset, g++ del PATH");
+        CHECK(CompilacionCpp::elegirCompilador("", "", false) == "g++",
+              "compilador: sin nada horneado se va al nombre standard");
+        CHECK(CompilacionCpp::elegirCompilador("C:/mio/cl.exe", existente.string(), true) ==
+                  "C:/mio/cl.exe",
+              "compilador: el override del entorno gana siempre, exista o no");
+        CHECK(CompilacionCpp::elegirCompilador("\"C:/mio/cl.exe\"", inexistente, false) ==
+                  "C:/mio/cl.exe",
+              "compilador: al override se le quitan las comillas del literal");
+    }
+
+    // --- Harvest del entorno de vcvars (H-3 nivel 2) --------------------------
+    // La receta es CRUDA para cmd.exe (sin citar: cmd no entiende el escape
+    // \" de la CRT) y no lleva datos de usuario: solo la ruta balanceada.
+    CHECK(CompilacionCpp::comandoEntornoVcvars(
+              "C:/VS/Auxiliary/Build/vcvars64.bat") ==
+              "/U /d /c call \"C:/VS/Auxiliary/Build/vcvars64.bat\" && set",
+          "el harvest arma la receta cruda `call ... && set` con /U (salida "
+          "UTF-16) y /d (sin AutoRun)");
+    // Parser de `set /U`: el banner se descarta, el valor puede contener '='
+    // (se corta en el primero), las claves quedan ordenadas y el bloque es
+    // multi-sz (NUL por par + NUL final). Sin >=3 variables no hay bloque.
+    const std::wstring setDePrueba =
+        L"Microsoft Visual Studio Version 17.0\r\n"
+        L"VC variables configured for: x64 native tools\r\n"
+        L"PATH=C:\\msys64\\mingw64\\bin;C:\\Windows\r\n"
+        L"INCLUDE=C:\\VS\\include;D:\\con=igual\\inc\r\n"
+        L"SONDA=ni\x00F1o caf\x00E9\r\n";
+    const std::wstring bloque = CompilacionCpp::bloqueDesdeSet(setDePrueba);
+    CHECK(!bloque.empty(), "el parseo del set /U devuelve un bloque");
+    CHECK(bloque.find(L"PATH=C:\\msys64\\mingw64\\bin;C:\\Windows") !=
+              std::wstring::npos,
+          "cada CLAVE=valor del set entra en el bloque");
+    CHECK(bloque.find(L"INCLUDE=C:\\VS\\include;D:\\con=igual\\inc") !=
+              std::wstring::npos,
+          "un valor con '=' se corta en el primer '=' de la clave");
+    CHECK(bloque.find(L"Microsoft Visual") == std::wstring::npos &&
+              bloque.find(L"configured") == std::wstring::npos,
+          "el banner de vcvars se descarta (no tiene forma CLAVE=valor)");
+    CHECK(bloque.find(L"SONDA=ni\x00F1o caf\x00E9") != std::wstring::npos,
+          "el UTF-16 sobrevive byte a byte (sin round-trip por narrow)");
+    CHECK(bloque.find(L"INCLUDE=") < bloque.find(L"PATH="),
+          "el bloque sale ordenado alfabeticamente, como pide CreateProcess");
+    CHECK(bloque.size() >= 2 && bloque[bloque.size() - 1] == L'\0' &&
+              bloque[bloque.size() - 2] == L'\0',
+          "el bloque termina doble NUL (multi-sz)");
+    CHECK(CompilacionCpp::bloqueDesdeSet(L"una=variable\r\n").empty(),
+          "con menos de 3 variables el bloque se toma vacio (cmd no corrio)");
+    CHECK(CompilacionCpp::bloqueDesdeSet(std::wstring()).empty(),
+          "una salida vacia da bloque vacio");
+#if defined(_WIN32)
+    // Fallback real: un vcvars inexistente no puede dar entorno.
+    // BackendCpp avisa y compila con el entorno heredado en ese caso.
+    CHECK(CompilacionCpp::entornoVcvars("C:/no/existe/vcvars64.bat").empty(),
+          "un vcvars inexistente devuelve bloque vacio (modo heredado)");
+#endif
+}
+
+// --- Contrato del sondeo de toolchain (H-14 + H-3 nivel 2) -------------------
+// El sondeo original pasaba por std::system con `> /dev/null`, un redirect de
+// POSIX: cmd.exe lo toma como ruta inexistente y el chequeo fallaba aunque la
+// herramienta este instalada (scripts-java-tests se saltaba en Windows con el
+// JDK presente). Con H-3 nivel 2 no hay shell: SondeoToolchain::sondear()
+// ejecuta la herramienta directamente y el log ES el dispositivo nulo de la
+// plataforma, abierto por Proceso. Este test fija ese contrato y lo ejercita
+// de verdad con un proceso real.
+static void testSondeoToolchain(const std::string& exePropio) {
+#if defined(_WIN32)
+    CHECK(std::string(SondeoToolchain::dispositivoNulo()) == "NUL",
+          "H-14: en Windows el dispositivo nulo del sondeo es NUL");
+#else
+    CHECK(std::string(SondeoToolchain::dispositivoNulo()) == "/dev/null",
+          "H-14: en POSIX el dispositivo nulo del sondeo es /dev/null");
+#endif
+    CHECK(!SondeoToolchain::sondear("", "-version"),
+          "el sondeo de una herramienta vacia falla sin ejecutar nada");
+
+    // Spawn REAL a traves del runner (sin shell): el propio binario, que con
+    // el guard `--hijo` de main() termina en 0. Es la comprobacion de que
+    // Proceso::ejecutar lanza, redirige y devuelve el codigo en esta misma
+    // plataforma — sin depender de una herramienta externa ni de su exit
+    // code (cl /? no es verificable donde no hay MSVC).
+    CHECK(SondeoToolchain::sondear(exePropio, "--hijo"),
+          "el sondeo corre un proceso real sin shell (el propio binario)");
+}
+
+int main(int argc, char** argv) {
+    // Modo hijo: cuando SondeoToolchain::sondear() lanza este mismo binario
+    // con `--hijo`, termina en 0 sin volver a sondear (evita la recursion).
+    if (argc >= 2 && std::string(argv[1]) == "--hijo")
+        return 0;
+
     testValoresPorDefecto();
     testLecturaEscritura();
     testGruposVector();
     testObjetoResolucion();
+    testComponenteResolucion();
     testSerializacionBinaria();
     testAlinearValores();
+    testEntradaDeScripts();
+    testAudioIniciadoPorScripts();
+    testContratoCompilacion();
+    testSondeoToolchain(argv[0]);
 
     std::cout << "ScriptsTests: " << total << " verificaciones, " << fallos
               << " fallos" << std::endl;

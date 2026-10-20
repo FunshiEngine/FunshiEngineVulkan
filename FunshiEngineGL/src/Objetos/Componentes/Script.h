@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,9 +20,13 @@
 #define SCRIPT_H
 
 #include "../../Behaviour/ComportamientoCargado.h"
+#include "../../Fisicas/ContactoFisico.h"
 #include "Component.h"
 #include <string>
+#include <utility>
 #include <vector>
+
+class RegistroDiagnosticos;
 
 // Componente de comportamiento de usuario. Apunta a un fuente (.cpp o .java);
 // el backend correspondiente lo compila a un artefacto y lo carga en caliente
@@ -31,7 +35,9 @@ class Script : public Component {
 private:
     std::string dllPath; // fuente del script (.cpp / .java)
     std::string nameClass;
+    std::string nombreComponente_;
     ComportamientoCargado comportamiento_;
+    std::vector<ReflejoScripts::DefCampo> camposInspector_;
     std::vector<ReflejoScripts::ValorCampo> valores_;
     bool cargado_ = false;  // ya se intento cargar el fuente actual
     bool arrancado_ = false; // onStart ya fue invocado (en play mode)
@@ -40,6 +46,7 @@ private:
     // compila inline y deja que la cola lo haga.
     bool aplazarCarga_ = false;
     std::string error_;
+    RegistroDiagnosticos* diagnosticos_ = nullptr;
 
     void extraerValores();
     bool cargarActual(std::string& error);
@@ -51,12 +58,27 @@ protected:
 public:
     // API publica historica (GUI existente de drag & drop)
     void setDllPath(std::string dllPath);
-    std::string getPath() { return dllPath; }
-    std::string getNameClass() { return nameClass; }
+    void setRegistroDiagnosticos(RegistroDiagnosticos* registro) noexcept {
+        diagnosticos_ = registro;
+    }
+    std::string getPath() const { return dllPath; }
+    const std::string& getNameClass() const { return nameClass; }
+    const std::string& getNombreComponente() const noexcept {
+        return nombreComponente_;
+    }
+    void setNombreComponente(std::string nombre) {
+        nombreComponente_ = std::move(nombre);
+    }
+    std::string nombreParaMostrar() const {
+        if (!nombreComponente_.empty()) return nombreComponente_;
+        return nameClass.empty() ? "Script" : nameClass;
+    }
 
     // Carga/ejecucion
     void actualizar(GameObject* owner, float deltaTime);
     void detener(GameObject* owner);
+    void notificarContacto(GameObject* owner, Collider* propio,
+                           Collider* otro, TipoContacto tipo);
     void recargar(GameObject* owner); // forza recompilar + recargar
     void cargarSiNecesario();         // carga (compila) sin arrancar onStart
 
@@ -74,7 +96,7 @@ public:
 
     // SerializeField: campos reflejados del comportamiento (si esta cargado)
     const std::vector<ReflejoScripts::DefCampo>& obtenerCampos() const {
-        return comportamiento_.campos;
+        return camposInspector_;
     }
     std::vector<ReflejoScripts::ValorCampo>& obtenerValores() { return valores_; }
     const std::vector<ReflejoScripts::ValorCampo>& obtenerValores() const {

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,15 +19,14 @@
 #ifndef SETTINGSCOLOR_H
 #define SETTINGSCOLOR_H
 #include "../SettingsComponent.h"
-class GameObject;
-class Color;
+#include "../../../Objetos/GameObject.h"
+#include "../../../Objetos/Componentes/Color.h"
 
 class SettingsColor : public SettingsComponent {
 	GameObject* gameObject;
 public:
-	SettingsColor(GameObject* gameObject);
-
+	explicit SettingsColor(GameObject* gameObject);
 	void showDataComponent() override;
-	Component* getComponent() override;
+	Component* getComponent() override { return gameObject ? gameObject->getComponent<Color>() : nullptr; }
 };
 #endif

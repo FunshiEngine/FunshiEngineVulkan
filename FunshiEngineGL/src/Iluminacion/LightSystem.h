@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,11 +19,11 @@
 #ifndef LIGHTSYSTEM_H
 #define LIGHTSYSTEM_H
 
-// Subsistema de iluminacion (solo CPU, sin estado GL): cada frame escanea los
-// GameObjects de la escena, toma sus componentes Light y exporta los datos para
-// que el renderer de la escena los suba como uniforms del shader. No queda
-// estado de luz en OpenGL: en un contexto core la iluminacion viaja por el
-// shader, y aca no se toca ninguna funcion de GL. Light es solo data.
+// Subsistema de iluminacion (solo CPU, sin estado grafico): cada frame escanea
+// los GameObjects de la escena, toma sus componentes Light y exporta los datos
+// para que el renderer de la escena los suba como uniforms del shader. No
+// queda estado de luz en la API grafica: la iluminacion viaja por el shader, y
+// aca no se toca ninguna funcion de la API. Light es solo data.
 class GameObject;
 
 template <typename T>
@@ -34,7 +34,7 @@ class ListaDE;
 
 // Descripcion CPU de una luz del escenario, lista para uniforms del shader.
 // Es la contraparte de aplicarLightComponent: position/direction se derivan
-// del Transform del objeto dueño (como GL_LIGHT0..7), no del estado GL.
+// del Transform del objeto dueño, no de ningun estado de la API grafica.
 struct LightData {
     int type = 0;              // 0 direccional, 1 punto, 2 spot (LightType)
     float worldPos[3] = {0.f, 0.f, 0.f};   // dir para direccional, pos punto/spot
@@ -50,21 +50,22 @@ struct LightData {
 
 class LightSystem {
 public:
-    // Slots de luz disponibles (limite de GL_LIGHT0..GL_LIGHT7).
+    // Cantidad de luces que el motor envia al shader en un frame. El backend
+    // tiene que reservar esta cantidad en su bloque de uniformes.
     static constexpr int kMaxLights = 8;
 
     LightSystem();
     ~LightSystem() = default;
 
-    // Luz global del modelo (antes GL_LIGHT_MODEL_AMBIENT), default gris tenue.
+    // Luz global de la escena, default gris tenue.
     void setGlobalAmbient(float r, float g, float b);
 
     const float* getGlobalAmbient() const noexcept { return globalAmbient_; }
 
     // Version CPU de la pasada de luces: llena luces[] (hasta kMaxLights) con
-    // la misma semantica que el backend parametriza en los slots GL_LIGHT0..7
-    // (escaneo del arbol, posicion = Transform, direccional usa la rotacion
-    // del forward). outCount queda con la cantidad de luces recogidas.
+    // la semantica que el shader espera (escaneo del arbol, posicion =
+    // Transform, direccional usa la rotacion del forward). outCount queda con
+    // la cantidad de luces recogidas.
     void collectLights(ListaDE<GameObject*>* objects, LightData luces[],
                        int& outCount) const;
 

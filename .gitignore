@@ -95,6 +95,9 @@ install_manifest.txt
 # Build directories
 FunshiEngineGL/build/
 FunshiEngineGL/build_temp/
+FunshiEngineGL/build_cli_msvc/
+FunshiEngineGL/build_terminal_msvc/
+FunshiEngineGL/build_pty_tests/
 FunshiEngineGL/build-win/
 FunshiEngineGL_BACKUP/
 # Build dirs en la raiz del repo (build-release de desarrollo, build-java, etc.)
@@ -108,12 +111,34 @@ FunshiEngineGL/packaging/instalador/
 FunshiEngineGL/packaging/ifw/output/
 FunshiEngineGL/*.run
 
+# Sondas de depuración desechables (evidencia empírica de los análisis de
+# bugs: compilan y se ejecutan fuera del build, pero no son código del motor
+# ni del juego)
+FunshiEngineGL/sondas/
+
+# Distribución CEF descargada en configure (Fase 4 WebUI): ~657 MB el tarball
+# y ~3.6 GB extraída. No se versiona; CMake la deja bajo el build dir.
+FunshiEngineGL/.cef/
+FunshiEngineGL/.cef_cache/
+
 # Temporary refactoring/build scripts
 FunshiEngineGL/fix_build.py
 FunshiEngineGL/gui_contents.txt
 FunshiEngineGL/patch_cube.py
 FunshiEngineGL/refactor_all.py
 FunshiEngineGL/refactor_gui.py
+
+# Memoria de trabajo de los agentes: todo el estado local que un agente
+# necesita para retomar sin re-investigar, y que no es documentación del
+# proyecto. Contiene la memoria de contexto, el lote de correcciones, las
+# auditorías y los informes de depuración. Su estructura y las reglas de uso
+# están en la sección "Memoria de trabajo" de AGENTS.md; lo que se vuelva
+# regla estable del proyecto se promueve a los .md versionados (README.md,
+# MANUAL_DE_USO.md, PROJECT_STRUCTURE.md, DocuTecnicoBugs.md) en el commit
+# que lo justifica.
+.agentes/pendiente-revision/
+.agentes/
+
 
 # Local ImGui configuration
 imgui.ini

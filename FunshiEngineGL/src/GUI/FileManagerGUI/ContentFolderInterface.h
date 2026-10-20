@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@
 
 #include "../../FileManager/FileManager.h"
 #include "../GeneralUserInterface.h"
+#include "RenombrarElemento.h"
 
 class IconosGUI;
 class EditorEventBus;
@@ -33,9 +34,9 @@ class EditorEventBus;
 // arbol. Ya no se enlaza al arbol por puntero ni le pide el contenido: lee
 // cada frame la seleccion compartida (FileSelection), se muestra a si mismo
 // cuando hay carpeta (y se oculta si no) y notifica su navegacion por doble
-// clic dejando la ruta pendiente en la seleccion (R3). Las operaciones de
+// clic dejando la ruta pendiente en la seleccion. Las operaciones de
 // Filesystem van a la fachada FileManager (listado, dialogos nativos, abrir
-// con la app del sistema, plantillas), nunca a system() o al Filesystem. (R1)
+// con la app del sistema, plantillas), nunca a system() o al Filesystem.
 class ContentFolderInterface : public GeneralUserInterface {
 private:
     FileManager* fileManager = nullptr;
@@ -45,14 +46,15 @@ private:
     bool creandoScript = false;
     bool creandoScriptJava = false;
     char nombreNuevo[256] = "";
+    // Motivo por el que no se pudo crear el elemento, para mostrarlo sin cerrar
+    // el modal. Se limpia al abrirlo.
+    std::string errorNuevoElemento;
     IconosGUI* iconosGUI = nullptr;
 
-    // Estado de renombrado (R6): ruta del elemento, si es carpeta (sube el
-    // contador del arbol) y el buffer con el nombre a confirmar en el modal.
-    std::string renombrarRuta;
-    bool renombrarEsCarpeta = false;
-    bool abrirPopupRenombrar = false;
-    char bufferRenombrar[256] = "";
+    // Estado de renombrado: el modal compartido con el arbol
+    // (RenombrarElemento.h) guarda la ruta del elemento, si es carpeta y el
+    // nombre a confirmar.
+    RenombrarElemento::Modal modalRenombrar;
 
     // Estado de eliminacion de archivos y carpetas del grid (R7 similar a TreeFilesInterface):
     // se encola la RUTA en el menu contextual, confirmacion en modal, y eliminacion
@@ -69,7 +71,7 @@ private:
     bool abrirPopupTipoScript = false;
     int tipoScriptSeleccionado = 0; // 0 = C++, 1 = Java
 
-    // Cache del grid (R5): el directorio se lee en disco SOLO cuando cambia
+    // Cache del grid: el directorio se lee en disco SOLO cuando cambia
     // la ruta mostrada o su mtime; el dibujo del grid usa este cache en vez
     // de re-scanear cada frame. Las entradas vienen de FileManager.
     std::vector<FileManager::EntradaDirectorio> cacheEntradas;
@@ -82,11 +84,12 @@ private:
     bool dockAlive_ = true;
     std::string cacheCarpeta;
     std::filesystem::file_time_type cacheMtime{};
+    unsigned long ultimoContadorVisto = 0;  // Para detectar cambios en el arbol y refrescar antes de initGUI
 
-    void crearNuevoElemento();
+    std::string crearNuevoElemento();
     void recorrer(const std::string& path);
 
-    // Invalida el cache del grid (R5): la entrada desaparecio de hecho de la
+    // Invalida el cache del grid: la entrada desaparecio de hecho de la
     // carpeta visible y el mtime puede no haberse actualizado todavia.
     void invalidarCache() {
         cacheCarpeta.clear();

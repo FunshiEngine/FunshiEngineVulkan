@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <string>
 
 #include "ComportamientoCargado.h"
+#include "../Fisicas/ContactoFisico.h"
 
 class BackendScript;
 
@@ -44,6 +45,9 @@ public:
     static void llamarActualizar(ComportamientoCargado& c, GameObject* owner,
                                  float deltaTime);
     static void llamarDetener(ComportamientoCargado& c, GameObject* owner);
+    static void llamarContacto(ComportamientoCargado& c, GameObject* owner,
+                               Collider* propio, Collider* otro,
+                               TipoContacto tipo);
 
     // SerializeField: despacha al backend del lenguaje.
     static void inyectar(ComportamientoCargado& c,

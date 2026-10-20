@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,11 +24,12 @@
 #include "../../../Scenes/EditorController.h"
 #include <imgui.h>
 
-SettingsColliderMalla::SettingsColliderMalla(GameObject* objeto) {
-	myCollider = objeto->getComponent<MallaCollider>();
+SettingsColliderMalla::SettingsColliderMalla(GameObject* objeto)
+    : SettingsComponent(demangle(typeid(MallaCollider).name())),
+      myCollider(objeto ? objeto->getComponent<MallaCollider>() : nullptr),
+      newRadio(myCollider ? myCollider->getRadio() : 0.0f) {
 	this->settingsTransform =
-	    new SettingsTransform(myCollider->getTransform(), objeto);
-	this->newRadio = myCollider->getRadio();
+	    new SettingsTransform(myCollider ? myCollider->getTransform() : nullptr, objeto);
 }
 
 SettingsColliderMalla::~SettingsColliderMalla() { delete settingsTransform; }
@@ -38,6 +39,9 @@ void SettingsColliderMalla::setEditor(EditorController* editor) {
 }
 
 void SettingsColliderMalla::showDataComponent() {
+	bool visible = myCollider->estaVisibleEnEscena();
+	if (ImGui::Checkbox("Visible en escena", &visible))
+		myCollider->setVisibleEnEscena(visible);
 	ImGui::InputFloat("Radio", &newRadio);
 	if (ImGui::Button("Confirmar")) {
 		if (newRadio > 0 && newRadio != myCollider->getRadio()) {
@@ -54,8 +58,4 @@ void SettingsColliderMalla::showDataComponent() {
 		}
 	}
 	settingsTransform->showDataComponent();
-
-	myCollider->dibujarCollider();
 }
-
-Component* SettingsColliderMalla::getComponent() { return myCollider; }

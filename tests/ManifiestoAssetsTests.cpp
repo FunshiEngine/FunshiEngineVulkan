@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,7 +58,22 @@ EntradaAssets crearEntrada(const std::string& malla, const std::string& t0,
     e.texturas[1] = t1;
     e.texturas[2] = t2;
     e.texturas[3] = t3;
-    e.script = script;
+    e.scripts.push_back(script);
+    return e;
+}
+
+// Entrada con las seis caras del cubemap del Skybox, en el orden +X, -X, +Y, -Y,
+// +Z, -Z en que las expone el componente.
+EntradaAssets crearEntradaSkybox(const std::string& posX, const std::string& negX,
+                                 const std::string& posY, const std::string& negY,
+                                 const std::string& posZ, const std::string& negZ) {
+    EntradaAssets e;
+    e.caraMasX = posX;
+    e.caraMenosX = negX;
+    e.caraMasY = posY;
+    e.caraMenosY = negY;
+    e.caraMasZ = posZ;
+    e.caraMenosZ = negZ;
     return e;
 }
 } // namespace
@@ -94,10 +109,10 @@ int main() {
               "round-trip de la textura specular");
         CHECK(leidas[3].texturas[2].empty(),
               "slot de textura vacio sigue vacio");
-        CHECK(leidas[3].script == "Scripts/mi_script.dll",
+        CHECK(leidas[3].scripts[0] == "Scripts/mi_script.dll",
               "round-trip del script");
         // Entrada sin malla ni script: solo la textura normal.
-        CHECK(leidas[7].malla.empty() && leidas[7].script.empty(),
+        CHECK(leidas[7].malla.empty() && leidas[7].scripts.empty(),
               "solo aporta los campos que tiene");
         CHECK(leidas[7].texturas[2] == "Texturas/solo_normal.png",
               "la textura del slot 2 se conserva");
@@ -111,7 +126,7 @@ int main() {
         CHECK(!ManifiestoAssetsCore::leerArchivo(archivo.string(), entradas),
               "leerArchivo devuelve false con archivo inexistente");
         CHECK(entradas.size() == 1 && entradas[1].malla == "vieja" &&
-                  entradas[1].script == "viejo",
+                  entradas[1].scripts[0] == "viejo",
               "el mapa queda intacto con archivo inexistente");
     }
 
@@ -158,7 +173,7 @@ int main() {
               "relativizarEntrada deja la malla relativa");
         CHECK(entrada.texturas[0] == "Texturas/dif.png",
               "relativizarEntrada deja la textura relativa");
-        CHECK(entrada.script == "Scripts/mi_script.dll",
+        CHECK(entrada.scripts[0] == "Scripts/mi_script.dll",
               "relativizarEntrada deja el script relativo");
 
         ManifiestoAssetsCore::absolutizarEntrada(entrada);
@@ -166,7 +181,7 @@ int main() {
               "absolutizarEntrada resuelve la malla a absoluta");
         CHECK(entrada.texturas[0] == raiz + "/Texturas/dif.png",
               "absolutizarEntrada resuelve la textura a absoluta");
-        CHECK(entrada.script == raiz + "/Scripts/mi_script.dll",
+        CHECK(entrada.scripts[0] == raiz + "/Scripts/mi_script.dll",
               "absolutizarEntrada resuelve el script a absoluto");
 
         EditorConfig::limpiarRaizAssets();
@@ -208,7 +223,58 @@ int main() {
               "path persistido distinto y no vacio aplica (precedencia)");
     }
 
-    // 8. entradaVacia.
+    // 8. Las seis caras del cubemap del Skybox: el manifiesto promete
+    //    precedencia sobre el .db, asi que tambien las tiene que guardar.
+    {
+        const fs::path archivo = base / "skybox.json";
+        std::map<int, EntradaAssets> entradas;
+        entradas[4] = crearEntradaSkybox(
+            "Cielo/px.png", "Cielo/nx.png", "Cielo/py.png", "Cielo/ny.png",
+            "Cielo/pz.png", "Cielo/nz.png");
+        CHECK(ManifiestoAssetsCore::escribirArchivo(archivo.string(), entradas),
+              "escribirArchivo escribe un manifiesto con solo Skybox");
+
+        std::map<int, EntradaAssets> leidas;
+        CHECK(ManifiestoAssetsCore::leerArchivo(archivo.string(), leidas),
+              "leerArchivo lee el manifiesto del Skybox");
+        CHECK(leidas.size() == 1, "se lee la entrada del Skybox");
+        CHECK(leidas[4].caraMasX == "Cielo/px.png" &&
+                  leidas[4].caraMenosX == "Cielo/nx.png" &&
+                  leidas[4].caraMasY == "Cielo/py.png" &&
+                  leidas[4].caraMenosY == "Cielo/ny.png" &&
+                  leidas[4].caraMasZ == "Cielo/pz.png" &&
+                  leidas[4].caraMenosZ == "Cielo/nz.png",
+              "round-trip de las seis caras del cubemap");
+
+        // Con la raiz de assets fijada, las caras se relativizan y absolutizan
+        // igual que la malla: si no, al mover el proyecto el .db era el unico que
+        // conservaba de donde venian.
+        const std::string raiz = "/motor/MotorGrafico/MiJuego/srcMiJuego";
+        EditorConfig::fijarRaizAssets(raiz);
+        EntradaAssets entrada = crearEntradaSkybox(
+            raiz + "/Cielo/px.png", "", raiz + "/Cielo/py.png", "",
+            raiz + "/Cielo/pz.png", "");
+        ManifiestoAssetsCore::relativizarEntrada(entrada);
+        CHECK(entrada.caraMasX == "Cielo/px.png" &&
+                  entrada.caraMasZ == "Cielo/pz.png",
+              "relativizarEntrada deja las caras relativas");
+        CHECK(entrada.caraMenosX.empty() && entrada.caraMenosY.empty() &&
+                  entrada.caraMenosZ.empty(),
+              "una cara vacia sigue vacia al relativizar");
+        ManifiestoAssetsCore::absolutizarEntrada(entrada);
+        CHECK(entrada.caraMasX == raiz + "/Cielo/px.png" &&
+                  entrada.caraMenosY.empty(),
+              "absolutizarEntrada resuelve las caras a absolutas");
+        EditorConfig::limpiarRaizAssets();
+
+        // Una entrada con solo caras no esta vacia: si lo estuviera, quien decide
+        // guardar se saltaria al Skybox.
+        CHECK(!ManifiestoAssetsCore::entradaVacia(
+                  crearEntradaSkybox("", "", "", "", "", "Cielo/pz.png")),
+              "una sola cara ya hace que la entrada no este vacia");
+    }
+
+    // 9. entradaVacia.
     {
         CHECK(ManifiestoAssetsCore::entradaVacia(EntradaAssets()),
               "entrada con todos los campos vacios se considera vacia");

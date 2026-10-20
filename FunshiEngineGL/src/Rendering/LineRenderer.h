@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@ class ShaderProgram;
 // de lineas gruesas): cubre la grilla, los marcadores de luz/camara y los
 // wireframes de los colliders, y es la UNICA via de dibujo de lineas (el
 // glBegin/glEnd + glLineWidth del modo inmediato quedo eliminado al migrar a
-// OpenGL 3.3 core). El ancho se resuelve en pixeles dentro del shader, asi que
+// backend que se instale). El ancho se resuelve en pixeles dentro del shader, asi que
 // las lineas se ven igual de gruesas a cualquier distancia (GL_LINES solo
 // garantiza 1 px en un contexto core).
 //
@@ -65,6 +65,7 @@ public:
     // para convertir el ancho de linea de pixeles a NDC; hay que informarlo
     // cuando cambia el viewport (la pasada principal y cada vista previa).
     void setViewport(int width, int height) noexcept;
+    void setHorizonteVisual(float inicio, float fin) noexcept;
 
     // Dibuja un batch ya subido con el ancho dado en pixeles. "model" es la
     // matriz del objeto que aporta la geometria (la del objeto "Grilla", la del
@@ -90,6 +91,9 @@ private:
     bool vistaValida_ = false;
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;
+    glm::vec3 posicionCamara_ = glm::vec3(0.0f);
+    float horizonteInicio_ = 0.0f;
+    float horizonteFin_ = 150.0f;
 
     // Compila el shader de lineas la primera vez. No lanza: si el pipeline
     // moderno no esta disponible, deja available() == false.

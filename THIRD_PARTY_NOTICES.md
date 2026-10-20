@@ -12,6 +12,7 @@ licencias originales, que se resumen a continuación junto a su ubicación.
 | stb_image v2.16 | `FunshiEngineGL/src/Herramientas/IconosGUI/stb_image.h` | Dominio público (dual MIT) | Sean Barrett |
 | OpenGL Mathematics (GLM) | Dependencia del sistema, con copia de respaldo si se detecta en el sistema | MIT / The Happy Bunny License | OpenGL Mathematics |
 | miniaudio | `FunshiEngineGL/src/Audio/miniaudio.h` | Dominio público (dual MIT-0 / MIT / CC0) | David Reid |
+| Chromium Embedded Framework (CEF) 154 | Descarga en configure bajo el build dir (`cef/`), no versionada; runtime copiado junto al binario (`libcef.so`/`.dll`, `resources.pak`, `icudtl.dat`, `locales/`) | BSD-3-Clause | The Chromium Embedded Framework Authors |
 
 ## Textos de licencia
 
@@ -36,6 +37,8 @@ licencias originales, que se resumen a continuación junto a su ubicación.
 > SOFTWARE.
 
 - **Dear ImGui**: aviso completo en la cabecera de `imgui.h` / `imgui.cpp`.
+  Incluye el backend de render para Vulkan (`imgui_impl_vulkan.h/.cpp`),
+  vendorizado sin modificar desde el mismo commit que el resto de ImGui.
   Proyecto: https://github.com/ocornut/imgui
 - **ImGuizmo**: aviso completo en `FunshiEngineGL/ImGuizmo/LICENSE`.
   Proyecto: https://github.com/CedricGuillemet/ImGuizmo
@@ -61,6 +64,40 @@ si el dominio público no aplica en tu jurisdicción (ver cabecera del archivo).
 David Reid, 2016-2024. Ver cabecera de `miniaudio.h`: dominio público (CC0), o
 MIT-0 / MIT a elección. En el instalador Linux, el aviso completo vive en
 `data/licencia/third-party/miniaudio-copyright`.
+
+### Chromium Embedded Framework (CEF)
+
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions are met:
+>
+> - Redistributions of source code must retain the above copyright notice, this
+>   list of conditions and the following disclaimer.
+> - Redistributions in binary form must reproduce the above copyright notice,
+>   this list of conditions and the following disclaimer in the documentation
+>   and/or other materials provided with the distribution.
+> - Neither the name of Google Inc. nor the name Chromium Embedded Framework
+>   nor the names of its contributors may be used to endorse or promote
+>   products derived from this software without specific prior written
+>   permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+> AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+> IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+> ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+> LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+> CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+> SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+> INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+> CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+> ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+> POSSIBILITY OF SUCH DAMAGE.
+
+Versión pineada: `154.0.34+g14c5a08+chromium-154.0.8037.98` (canal stable,
+distribución `standard` de `https://cef-builds.spotifycdn.com`, SHA1
+`d0a822afcf769371e961344b64f5a461066b6a0f` en Linux). Aviso completo en
+`LICENSE.txt` de la distribución. El export debe `strip`ear `libcef.so`
+(~1.39 GB → ~260 MB) y puede podar `locales/` al idioma soportado (set
+completo ~83 MB, `en-US.pak` 0.55 MB): set a empaquetar ~311 MB.
 
 ## Nota
 

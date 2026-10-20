@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,8 +22,6 @@
 #include <iostream>
 
 #include "Configuracion/EditorConfig.h"
-
-using namespace std;
 
 void Model::setPath(string path) {
 #if defined(_WIN32)
@@ -74,11 +72,8 @@ void Model::deserializeComponent(std::ifstream* fileNamePathContentObject) {
             EditorConfig::absolutizarRuta(std::string(filePath));
         strncpy(filePath, abs.c_str(), sizeof(filePath) - 1);
         filePath[sizeof(filePath) - 1] = '\0';
-
-        std::cout << filePath << std::endl;
     } else {
         filePath[0] = '\0';
-        std::cout << "No hay un path en el binario" << std::endl;
     }
 }
 

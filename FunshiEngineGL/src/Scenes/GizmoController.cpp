@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,7 +116,10 @@ bool GizmoController::transformDistinguible(const EstadoTransform& a,
 
 void GizmoController::procesarSeleccion(ImGuiIO& io, CameraComponent* camara,
                                         ListaDE<GameObject*>* objetos) {
-    ImGuizmo::SetOrthographic(false);
+    const bool ortografica =
+        camara &&
+        camara->getProjection() == CameraComponent::Projection::Orthographic;
+    ImGuizmo::SetOrthographic(ortografica);
     ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
     ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
     ImGuizmo::BeginFrame();
@@ -139,7 +142,8 @@ void GizmoController::procesarSeleccion(ImGuiIO& io, CameraComponent* camara,
     }
 }
 
-void GizmoController::dibujarYRastrear(ImGuiIO& io, CameraComponent* camara) {
+void GizmoController::dibujarYRastrear(ImGuiIO& io, CameraComponent* camara,
+                                       bool modo2D) {
     // Matrices de la vista activa: las necesita el gizmo (la pasada principal
     // ya las aplico por su cuenta; aca se recalculan para ImGuizmo). El aspect
     // se trunca igual que en GameScene cuando se pasa al renderer (fbW/fbH).
@@ -205,10 +209,16 @@ void GizmoController::dibujarYRastrear(ImGuiIO& io, CameraComponent* camara) {
 
     // Operacion efectiva de este frame: con guia activa es traslacion de un
     // solo eje, sin importar cual era la operacion del gizmo (1/T, 2/R, 3/U).
+    // En 2D la rotacion se limita a Z (el eje perpendicular al plano XY): el
+    // anillo completo giraria fuera del plano, que en una vista ortografica no
+    // se puede leer. La traslacion y la escala no cambian.
+    int operacionBase = operation_;
+    if (modo2D && operacionBase == ImGuizmo::ROTATE)
+        operacionBase = ImGuizmo::ROTATE_Z;
     const int operacionEfectiva =
         guiaEje >= GuiaEje::kEjeX && guiaEje <= GuiaEje::kEjeZ
             ? static_cast<int>(ImGuizmo::TRANSLATE_X << guiaEje)
-            : operation_;
+            : operacionBase;
 
     if (target.local && operacionEfectiva != 0) {
         // Matriz que maniula el gizmo: parentGlobal * local. Para translate y

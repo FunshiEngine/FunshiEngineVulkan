@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,16 +22,11 @@
 #include "../../../Objetos/Componentes/Color.h"
 #include <imgui.h>
 
-SettingsColor::SettingsColor(GameObject* gameObject) {
-	this->gameObject = gameObject;
-}
+SettingsColor::SettingsColor(GameObject* gameObject)
+    : SettingsComponent(demangle(typeid(Color).name())), gameObject(gameObject) {}
 
 void SettingsColor::showDataComponent() {
 	ImGui::Text("===ObjectColor===");
 	ImGui::ColorEdit3("Color", gameObject->auxColor);
 	gameObject->setColor(gameObject->auxColor);
-}
-
-Component* SettingsColor::getComponent() {
-	return gameObject->getComponent<Color>();
 }

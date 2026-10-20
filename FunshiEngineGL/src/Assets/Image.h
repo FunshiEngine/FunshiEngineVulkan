@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,11 +22,11 @@
 #include <cstdint>
 #include <vector>
 
-// Imagen decodificada en CPU, independiente de OpenGL: es la "malla" de las
+// Imagen decodificada en CPU, independiente de la pila grafica: es la "malla" de las
 // texturas. La genera el loader (StbImageLoader en la integracion con el motor;
 // un loader artificial en las pruebas headless) y la comparte el TextureManager
 // entre Material que apunten al mismo archivo. El renderer moderno la sube a
-// GPU en un TextureGL, de la misma manera que Mesh -> MeshGPU.
+// GPU en un TexturaGPU, de la misma manera que Mesh -> MeshGPU.
 struct Image {
     int width = 0;
     int height = 0;

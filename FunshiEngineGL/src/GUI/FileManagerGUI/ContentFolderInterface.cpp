@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 #include "../../Herramientas/PathUtils.h"
 #include "../../Events/EditorEventBus.h"
@@ -29,8 +30,11 @@
 #include "../../FileManager/FileSelection.h"
 #include "../WindowNames.h"
 #include "SoltarEnCarpeta.h"
+#include "CrearCarpeta.h"
 #include "../../Herramientas/IconosGUI/IconosGUI.h"
 #include <imgui.h>
+
+namespace fs = std::filesystem;
 
 ContentFolderInterface::ContentFolderInterface(bool stateGUI, FileManager* fileManager)
     : GeneralUserInterface(WindowNames::ShowFolder, stateGUI, ImGuiWindowFlags_MenuBar),
@@ -42,21 +46,24 @@ void ContentFolderInterface::setEditorEventBus(EditorEventBus* bus) noexcept {
     eventoArchivos_ = bus;
 }
 
-void ContentFolderInterface::crearNuevoElemento() {
+std::string ContentFolderInterface::crearNuevoElemento() {
     FileSelection* sel = fileManager->getSelection();
-    if (!sel->carpetaActual || nombreNuevo[0] == '\0') return;
+    if (!sel->carpetaActual)
+        return "No hay ninguna carpeta seleccionada: no se puede crear el elemento.";
+    if (nombreNuevo[0] == '\0')
+        return "Escribe un nombre para el elemento.";
 
     const std::string destFolder =
         sel->carpetaActual->getPathRoot() + PATH_SEP +
         sel->carpetaActual->getPathName();
 
     if (creandoCarpeta) {
-        const std::string ruta = destFolder + PATH_SEP + nombreNuevo;
-        if (fileManager->crearCarpeta(ruta)) {
-            // El arbol de carpetas cambia: se rescanceara al detectar el
-            // contador (R3). La carpeta visible se conserva por rutaVisible.
-            sel->contadorCambios++;
-        }
+        const CrearCarpeta::Resultado resultado =
+            CrearCarpeta::crear(fileManager, destFolder, nombreNuevo);
+        if (!resultado.creada) return resultado.error;
+        // El contador ya lo sube el helper: el arbol de carpetas cambia y se
+        // rescanceara al detectarlo. La carpeta visible se conserva por
+        // rutaVisible.
     } else {
         std::string nombre = nombreNuevo;
         if (creandoScript || creandoScriptJava) {
@@ -77,19 +84,22 @@ void ContentFolderInterface::crearNuevoElemento() {
         const std::string ruta = destFolder + PATH_SEP + nombre;
         // No sube el contador: los archivos no aparecen en el arbol de
         // carpetas y no merece colapsar la navegacion por un rescaneo.
-        fileManager->crearArchivo(ruta, contenido);
+        if (!fileManager->crearArchivo(ruta, contenido))
+            return "No se pudo crear el elemento: el nombre ya existe o la "
+                   "carpeta no tiene permisos de escritura.";
     }
 
     creandoCarpeta = false;
     creandoScript = false;
     creandoScriptJava = false;
     memset(nombreNuevo, 0, sizeof(nombreNuevo));
+    return std::string();  // sin error: el elemento quedo creado
 }
 
 void ContentFolderInterface::recorrer(const std::string& path) {
     FileSelection* sel = fileManager->getSelection();
 
-    // R5: re-scanear solo si cambio la ruta mostrada o el mtime del directorio
+    // Re-scanear solo si cambio la ruta mostrada o el mtime del directorio
     // (mtime de un directorio sube al agregar/quitar entradas, justo lo que
     // pinta este panel; crear/renombrar/borrar dentro lo actualiza).
     const auto mtime = FileManager::mtimeDirectorio(path);
@@ -150,14 +160,12 @@ void ContentFolderInterface::recorrer(const std::string& path) {
             ImGui::Button(icon, ImVec2(iconSize, iconSize));
         }
 
-        // R6/R7: menu contextual de la celda -> Renombrar / Eliminar (archivo o carpeta).
+        // Menu contextual de la celda -> Renombrar / Eliminar (archivo o carpeta).
         if (ImGui::BeginPopupContextItem("PopRenombrar")) {
             if (ImGui::MenuItem("Renombrar")) {
-                renombrarRuta = fullPath;
-                renombrarEsCarpeta = esCarpeta;
-                memset(bufferRenombrar, 0, sizeof(bufferRenombrar));
-                strncpy(bufferRenombrar, nombre.c_str(), sizeof(bufferRenombrar) - 1);
-                abrirPopupRenombrar = true;
+                // El modal compartido se encarga del disco y del aviso a la
+                // escena; aca solo se le pasa el elemento y su nombre actual.
+                modalRenombrar.solicitar(fullPath, esCarpeta, nombre);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::Separator();
@@ -188,7 +196,7 @@ void ContentFolderInterface::recorrer(const std::string& path) {
 
         if (isDoubleClicked) {
             if (esCarpeta && sel->carpetaActual) {
-                // FASE 1: solo se registra la ruta a abrir; el arbol la
+                // Solo se registra la ruta a abrir; el arbol la
                 // aplica al inicio de su contentGUI contra el arbol vigente.
                 sel->navegacionPendiente =
                     sel->carpetaActual->getPathRoot() + PATH_SEP +
@@ -232,11 +240,19 @@ void ContentFolderInterface::recorrer(const std::string& path) {
                     // El destino es la CARPETA, no su contenido.
                     // El mtime puede no haberse actualizado todavia tras el
                     // movimiento, asi que ademas de refrescar se invalida el
-                    // cache a proposito.
+                    // cache a proposito para AMBAS carpetas (origen y destino).
+                    std::string origenCarpeta;
                     if (origen &&
                         soltarEnCarpeta(fileManager, eventoArchivos_, origen,
-                                        fullPath, ctrlOCmd()))
+                                        fullPath, ctrlOCmd(), &origenCarpeta)) {
+                        // Invalidar cache de la carpeta destino (la visible)
                         invalidarCache();
+                        // Invalidar cache de la carpeta origen si es distinta
+                        if (!origenCarpeta.empty() && origenCarpeta != cacheCarpeta) {
+                            cacheCarpeta.clear();
+                            cacheMtime = std::filesystem::file_time_type{};
+                        }
+                    }
                 }
                 ImGui::EndDragDropTarget();
             }
@@ -268,10 +284,21 @@ void ContentFolderInterface::recorrer(const std::string& path) {
 
 void ContentFolderInterface::initGUI() {
     FileSelection* sel = fileManager->getSelection();
+    // Guard: sel puede ser nullptr si fileManager no esta inicializado
+    if (!sel) {
+        ImGui::Begin(getNameGui().c_str(), &dockAlive_, getFlagGui());
+        ImGui::End();
+        return;
+    }
     // Usa dockAlive_ (siempre true) para que la ventana exista en g.Windows
     // cada frame y ImGui pueda re-aplicar su DockId al restaurar el ini.
     // stateGUI controla solo la visibilidad visual (usuario cierra con X).
     ImGui::Begin(getNameGui().c_str(), &dockAlive_, getFlagGui());
+
+    // Nota: carpetaActual se valida y re-resuelve en FileManager::refrescar()
+    // cuando cambia contadorCambios. Aquí no dereferenciamos carpetaActual
+    // para evitar crashes si es un puntero colgante (p.ej. tras borrar la
+    // carpeta que se estaba viendo; contentGUI() la anula antes de borrar).
 
     // Barra de menu: la ventana se creo con ImGuiWindowFlags_MenuBar pero nunca
     // la dibujo, y es el lugar natural para decir que carpeta se esta viendo.
@@ -321,7 +348,9 @@ void ContentFolderInterface::initGUI() {
                 const std::string destFolder =
                     sel->carpetaActual->getPathRoot() + PATH_SEP +
                     sel->carpetaActual->getPathName();
-                size_t pos = sourceFolder.find_last_of("/\\");
+                // La barra invertida solo separa donde el sistema la trata
+                // como separador; en Linux es un caracter del nombre.
+                const std::string::size_type pos = indiceSeparadorFinal(sourceFolder);
                 std::string folderName = (pos != std::string::npos) ? sourceFolder.substr(pos + 1) : sourceFolder;
                 const std::string finalDest = destFolder + PATH_SEP + folderName;
                 if (fileManager->copiarCarpeta(sourceFolder, finalDest)) {
@@ -336,7 +365,7 @@ void ContentFolderInterface::initGUI() {
                 const std::string destFolder =
                     sel->carpetaActual->getPathRoot() + PATH_SEP +
                     sel->carpetaActual->getPathName();
-                size_t pos = sourceFile.find_last_of("/\\");
+                const std::string::size_type pos = indiceSeparadorFinal(sourceFile);
                 std::string fileName = (pos != std::string::npos) ? sourceFile.substr(pos + 1) : sourceFile;
                 const std::string finalDest = destFolder + PATH_SEP + fileName;
                 // Sin contador: copiar un archivo no modifica el arbol.
@@ -349,73 +378,50 @@ void ContentFolderInterface::initGUI() {
     if (abrirPopupNombre) {
         ImGui::OpenPopup("Ingresar nombre");
         abrirPopupNombre = false;
+        errorNuevoElemento.clear();
     }
 
     if (ImGui::BeginPopupModal("Ingresar nombre", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         ImGui::Text("Escribe el nombre del %s:",
                     creandoCarpeta ? "folder"
                                    : (creandoScriptJava ? "script java"
                                                         : (creandoScript ? "script C++"
                                                                          : "file")));
-        ImGui::InputText("##nombreNuevo", nombreNuevo, IM_ARRAYSIZE(nombreNuevo));
-        const bool confirmado = ImGui::Button("Crear", ImVec2(120, 0)) ||
-                                (ImGui::IsItemFocused() &&
-                                 ImGui::IsKeyPressed(ImGuiKey_Enter));
+        const bool enter = ImGui::InputText(
+            "##nombreNuevo", nombreNuevo, IM_ARRAYSIZE(nombreNuevo),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool confirmado = ImGui::Button("Crear", ImVec2(120, 0)) || enter;
         if (confirmado) {
-            crearNuevoElemento();
-            ImGui::CloseCurrentPopup();
+            // Cierra solo si el elemento quedo creado; si no, el popup sigue
+            // abierto con el motivo y el texto para corregirlo.
+            errorNuevoElemento = crearNuevoElemento();
+            if (errorNuevoElemento.empty())
+                ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancelar", ImVec2(120, 0))) {
+        const bool cancelar = ImGui::Button("Cancelar", ImVec2(120, 0)) ||
+                              ImGui::IsKeyPressed(ImGuiKey_Escape);
+        if (cancelar) {
+            memset(nombreNuevo, 0, sizeof(nombreNuevo));
             ImGui::CloseCurrentPopup();
         }
+        if (!errorNuevoElemento.empty())
+            ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s",
+                               errorNuevoElemento.c_str());
         ImGui::EndPopup();
     }
 
-    // R6: modal de renombrado de un elemento del grid.
-    if (abrirPopupRenombrar) {
-        ImGui::OpenPopup("Renombrar");
-        abrirPopupRenombrar = false;
-    }
-    if (!renombrarRuta.empty() &&
-        ImGui::BeginPopupModal("Renombrar", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Nuevo nombre del %s:",
-                    renombrarEsCarpeta ? "folder" : "archivo");
-        ImGui::InputText("##renombrarElemento", bufferRenombrar, IM_ARRAYSIZE(bufferRenombrar));
-        const bool confirmado = ImGui::Button("Renombrar", ImVec2(120, 0)) ||
-                                (ImGui::IsItemFocused() &&
-                                 ImGui::IsKeyPressed(ImGuiKey_Enter));
-        if (confirmado) {
-            const std::string nuevo = bufferRenombrar;
-            if (!nuevo.empty() &&
-                fileManager->renombrar(renombrarRuta, nuevo)) {
-                // Referencias de la escena bajo la ruta vieja (mallas,
-                // texturas, scripts): main las reescribe y persiste.
-                if (eventoArchivos_ != nullptr) {
-                    const std::string::size_type sep =
-                        renombrarRuta.find_last_of("/\\");
-                    if (sep != std::string::npos) {
-                        EditorEvent ev;
-                        ev.type = EditorEventType::ArchivosReubicados;
-                        ev.rutaAnterior = renombrarRuta;
-                        ev.rutaNueva =
-                            renombrarRuta.substr(0, sep) + PATH_SEP + nuevo;
-                        eventoArchivos_->publish(ev);
-                    }
-                }
-                // Si es carpeta, el arbol se rescancea; el cache del grid se
-                // invalida solo por mtime en el proximo recorrer().
-                if (renombrarEsCarpeta) sel->contadorCambios++;
-            }
-            renombrarRuta.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancelar", ImVec2(120, 0))) {
-            renombrarRuta.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+    // Renombre del elemento del grid. El modal (campo enfocado al abrir,
+    // Enter confirma) y el camino de disco/aviso viven en RenombrarElemento.h,
+    // compartidos con el arbol.
+    const RenombrarElemento::Resultado renombre = modalRenombrar.dibujar();
+    if (renombre.confirmado &&
+        RenombrarElemento::ejecutar(fileManager, eventoArchivos_,
+                                    renombre.ruta, renombre.nombreNuevo)) {
+        // Si era carpeta, el arbol se rescancea; el cache del grid se invalida
+        // solo por mtime en el proximo recorrer().
+        if (renombre.esCarpeta) sel->contadorCambios++;
     }
 
     // Modal para seleccionar tipo de script (C++ o Java)
@@ -446,7 +452,7 @@ void ContentFolderInterface::initGUI() {
         ImGui::EndPopup();
     }
 
-    // Modal de confirmacion para eliminar archivo (R7)
+    // Modal de confirmacion para eliminar archivo
     if (confirmarEliminarArchivo && !archivoAEliminar.empty()) {
         ImGui::OpenPopup("ConfirmarEliminarArchivo");
         confirmarEliminarArchivo = false;
@@ -467,7 +473,7 @@ void ContentFolderInterface::initGUI() {
         ImGui::EndPopup();
     }
 
-    // Modal de confirmacion para eliminar carpeta desde el grid (R7)
+    // Modal de confirmacion para eliminar carpeta desde el grid
     if (confirmarEliminarCarpetaGrid && !carpetaAEliminarGrid.empty()) {
         ImGui::OpenPopup("ConfirmarEliminarCarpetaGrid");
         confirmarEliminarCarpetaGrid = false;
@@ -496,7 +502,7 @@ void ContentFolderInterface::contentGUI() {
         sel->carpetaActual->getPathRoot() + PATH_SEP +
         sel->carpetaActual->getPathName();
 
-    // Eliminacion diferida (R7): ejecutada ANTES de recorrer() para que el cache
+    // Eliminacion diferida: ejecutada ANTES de recorrer() para que el cache
     // del grid se invalide y no muestre el elemento "fantasma" en este frame.
     if (!archivoAEliminarConfirmado.empty()) {
         fileManager->eliminarArchivo(archivoAEliminarConfirmado);
@@ -507,8 +513,38 @@ void ContentFolderInterface::contentGUI() {
         // No sube contadorCambios: archivos no estan en el arbol de carpetas.
     }
     if (!carpetaAEliminarGridConfirmada.empty()) {
+        // Si la carpeta que se va a eliminar es la que se esta viendo,
+        // navegar a la carpeta padre ANTES de borrar para no quedar
+        // en una vista invalida.
+        if (sel->carpetaActual) {
+            std::string rutaActual =
+                sel->carpetaActual->getPathRoot() + PATH_SEP + sel->carpetaActual->getPathName();
+            if (rutaActual == carpetaAEliminarGridConfirmada) {
+                // Construir ruta del padre: pathRoot + parent path del pathName
+                fs::path padrePath(sel->carpetaActual->getPathName());
+                padrePath = padrePath.parent_path();
+                if (!padrePath.empty() && padrePath != padrePath.root_name()) {
+                    std::string rutaPadre = sel->carpetaActual->getPathRoot() + PATH_SEP + padrePath.string();
+                    sel->rutaVisible = rutaPadre;  // Solo actualizar ruta; NO tocar carpetaActual
+                } else {
+                    // Si no hay padre (raiz), ir a la raiz del proyecto
+                    sel->rutaVisible = sel->carpetaActual->getPathRoot() + PATH_SEP + fileManager->getRootName();
+                }
+
+                // Invalidar carpetaActual AHORA para que initGUI() no intente
+                // acceder a un puntero colgante (la carpeta se borra del disco y
+                // el arbol se reconstruira en el proximo frame via contadorCambios).
+                sel->carpetaActual = nullptr;
+
+                // Subir contador para que el arbol se refresque en el SIGUIENTE frame
+                // y re-resuelva carpetaActual desde rutaVisible (FileManager::refrescar)
+                sel->contadorCambios++;
+            }
+        }
+
+        // AHORA sí: ejecutar borrado (la vista ya está en carpeta padre via rutaVisible)
         if (fileManager->eliminarCarpeta(carpetaAEliminarGridConfirmada)) {
-            sel->contadorCambios++;
+            // contadorCambios ya se subio arriba
         }
         // Forzar invalidacion del cache del grid tambien para carpetas.
         invalidarCache();
@@ -539,10 +575,19 @@ void ContentFolderInterface::contentGUI() {
                             ImGui::AcceptDragDropPayload("ARCHIVO_PATH")) {
                         const char* origen =
                             static_cast<const char*>(aceptado->Data);
+                        std::string origenCarpeta;
                         if (origen &&
                             soltarEnCarpeta(fileManager, eventoArchivos_,
-                                            origen, destFolder, ctrlOCmd()))
+                                            origen, destFolder, ctrlOCmd(),
+                                            &origenCarpeta)) {
+                            // Invalidar cache de la carpeta destino (la visible)
                             invalidarCache();
+                            // Invalidar cache de la carpeta origen si es distinta
+                            if (!origenCarpeta.empty() && origenCarpeta != cacheCarpeta) {
+                                cacheCarpeta.clear();
+                                cacheMtime = std::filesystem::file_time_type{};
+                            }
+                        }
                     }
                     ImGui::EndDragDropTarget();
                 }
@@ -555,7 +600,20 @@ void ContentFolderInterface::endGUI() { ImGui::End(); }
 
 void ContentFolderInterface::printGUI() {
     FileSelection* sel = fileManager->getSelection();
-    const bool hayCarpeta = sel && sel->carpetaActual != nullptr;
+    // Guard: sel puede ser nullptr si fileManager no esta inicializado
+    if (!sel) return;
+
+    // Refrescar arbol ANTES de initGUI() si contadorCambios ha cambiado.
+    // initGUI() dereferencia carpetaActual (en la barra de menu), y si el
+    // arbol se reconstruyo en otro panel (TreeFilesInterface) o por cambio
+    // externo, carpetaActual puede ser un puntero colgante. FileManager::refrescar()
+    // re-resuelve carpetaActual desde rutaVisible de forma segura.
+    if (sel->contadorCambios != ultimoContadorVisto || fileManager->huboCambiosExternos()) {
+        fileManager->refrescar();
+        ultimoContadorVisto = sel->contadorCambios;
+    }
+
+    const bool hayCarpeta = sel->carpetaActual != nullptr;
     // La ventana SIEMPRE existe en g.Windows (initGUI/endGUI cada frame)
     // para que ImGui pueda re-aplicar su DockId al restaurar el ini.
     // El contenido solo se dibuja si hay carpeta o stateGUI (visibilidad).

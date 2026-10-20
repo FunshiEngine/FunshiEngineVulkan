@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,8 @@
 */
 #include "MenuModel.h"
 
+#include <algorithm>
+#include <cctype>
 #include <utility>
 
 // ============================================================================
@@ -36,6 +38,12 @@ void MenuModel::abrirConfigProyecto() { vista = Vista::ConfigProyecto; }
 
 void MenuModel::volver() {
     if (vista == Vista::Opciones || vista == Vista::ConfigProyecto) {
+        // Al volver de ConfigProyecto se reinicia la seccion de la barra a
+        // "Crear proyecto": es la seccion con la que abre la vista en cada
+        // entrada, segun el diseno de F1.
+        if (vista == Vista::ConfigProyecto) {
+            seccionConfig = SeccionConfig::CrearProyecto;
+        }
         vista = Vista::Principal;
     }
 }
@@ -43,6 +51,34 @@ void MenuModel::volver() {
 bool MenuModel::estaVisible() const noexcept { return vista != Vista::Ninguna; }
 
 MenuModel::Vista MenuModel::getVista() const noexcept { return vista; }
+
+MenuModel::SeccionConfig MenuModel::getSeccionConfig() const noexcept {
+    return seccionConfig;
+}
+
+void MenuModel::setSeccionConfig(SeccionConfig seccion) {
+    seccionConfig = seccion;
+}
+
+MenuModel::AccionProyecto MenuModel::getAccionProyecto() const noexcept {
+    return accionProyecto;
+}
+
+void MenuModel::setAccionProyecto(AccionProyecto accion) {
+    accionProyecto = accion;
+}
+
+void MenuModel::limpiarAccionProyecto() noexcept {
+    accionProyecto = AccionProyecto::Ninguna;
+}
+
+DimensionProyecto MenuModel::getDimensionProyecto() const noexcept {
+    return dimensionProyecto;
+}
+
+void MenuModel::setDimensionProyecto(DimensionProyecto dimension) {
+    dimensionProyecto = dimension;
+}
 
 const std::string& MenuModel::getNombreProyecto() const noexcept {
     return nombreProyecto;
@@ -59,6 +95,26 @@ const std::vector<std::string>& MenuModel::getProyectosDisponibles() const noexc
 
 void MenuModel::setProyectosDisponibles(const std::vector<std::string>& proyectos) {
     proyectosDisponibles = proyectos;
+}
+
+bool MenuModel::existeProyecto(const std::string& nombre) const {
+    if (nombre.empty()) return false;
+#ifdef _WIN32
+    // El filesystem de Windows no distingue mayusculas: "Foo" y "foo" son la
+    // misma carpeta, asi que el cotejo tambien las trata como iguales.
+    auto minusculas = [](std::string s) {
+        for (char& c : s)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string objetivo = minusculas(nombre);
+    for (const std::string& p : proyectosDisponibles)
+        if (minusculas(p) == objetivo) return true;
+    return false;
+#else
+    return std::find(proyectosDisponibles.begin(), proyectosDisponibles.end(),
+                     nombre) != proyectosDisponibles.end();
+#endif
 }
 
 const std::string& MenuModel::getProyectoARenombrar() const noexcept {
@@ -119,6 +175,10 @@ const Apariencia& MenuModel::getApariencia() const noexcept {
 }
 
 void MenuModel::setApariencia(const Apariencia& valor) {
+    // Apariencia tiene operator== justo para esto: reaplicar el mismo perfil no
+    // debe republicar ni reescribir el tema. En particular evita que el
+    // setApariencia inicial del arranque se considere un cambio del usuario.
+    if (apariencia == valor) return;
     apariencia = valor;
     if (onCampoCambio) onCampoCambio(Campo::Apariencia);
 }
@@ -152,12 +212,46 @@ std::string MenuModel::traducir(const std::string& clave) const {
          {"(no hay proyectos: crea uno en Config Proyect)",
           "(no projects: create one in Config Project)"}},
         {"config_proyecto", {"Config Proyect", "Config Project"}},
+        {"crear_proyecto", {"Crear proyecto", "Create project"}},
+        {"importar_proyecto", {"Importar proyecto", "Import project"}},
+        {"importar_no_disponible",
+         {"Importar un proyecto todavia no esta disponible.",
+          "Importing a project is not available yet."}},
+        {"proyecto_actual", {"Proyecto actual", "Current project"}},
+        {"dimension", {"Tipo de proyecto", "Project type"}},
+        {"dimension_2d", {"2D - Plano", "2D - Flat"}},
+        {"descripcion_2d",
+         {"Para juegos vistos de frente, como una hoja de papel: los objetos se "
+          "mueven a lo ancho y a lo alto. Ideal para plataformas, puzzles y "
+          "juegos arcade.",
+          "For games seen from the front, like a sheet of paper: objects move "
+          "across and up. Great for platformers, puzzles and arcade games."}},
+        {"dimension_3d", {"3D - Profundidad", "3D - Depth"}},
+        {"descripcion_3d",
+         {"Para mundos con profundidad, como el mundo real: los objetos se "
+          "mueven a lo ancho, a lo alto y hacia adentro. Ideal para "
+          "exploracion, accion y mundos abiertos.",
+          "For worlds with depth, like the real world: objects move across, up "
+          "and into the scene. Great for exploration, action and open worlds."}},
+        {"aviso_no_revertir",
+         {"Una vez creado, el tipo de proyecto no se puede cambiar: no se puede "
+          "pasar de 2D a 3D ni al reves. Elegi con cuidado.",
+          "Once created, the project type cannot be changed: you cannot switch "
+          "from 2D to 3D or back. Choose carefully."}},
+        {"crear", {"Crear", "Create"}},
+        {"cancelar", {"Cancelar", "Cancel"}},
+        {"nombre_vacio",
+         {"Escribi un nombre para el proyecto.", "Type a name for the project."}},
+        {"nombre_repetido",
+         {"Ya existe un proyecto con ese nombre.",
+          "A project with that name already exists."}},
         {"opciones", {"Opciones", "Options"}},
         {"configuracion", {"Configuracion", "Settings"}},
         {"salir", {"Exit", "Exit"}},
         {"volver", {"Volver", "Back"}},
         {"juego", {"Juego", "Game"}},
         {"idioma", {"Idioma", "Language"}},
+        {"radio_difuminado", {"Radio de difuminado", "Fade radius"}},
         {"sensibilidad_camara", {"Sensibilidad de camara", "Camera sensitivity"}},
         {"sensibilidad_movimiento",
          {"Sensibilidad de movimiento", "Movement sensitivity"}},
@@ -167,7 +261,10 @@ std::string MenuModel::traducir(const std::string& clave) const {
          {"Modo blanco y negro (interfaz y viewport)",
           "Black & white mode (UI and viewport)"}},
         {"color_acento", {"Color de acento de la interfaz", "UI accent color"}},
-        {"color_fondo", {"Color de fondo de la escena", "Scene background color"}},
+        {"color_cielo_superior",
+         {"Color de la parte superior del cielo", "Sky top color"}},
+        {"color_cielo_inferior",
+         {"Color de la parte inferior del cielo", "Sky bottom color"}},
         {"ayuda_bn",
          {"El modo blanco y negro desatura toda la interfaz (incluido el\n"
           "acento) y usa blanco/negro en el fondo y la grilla del viewport\n"

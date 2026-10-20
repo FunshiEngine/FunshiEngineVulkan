@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +39,9 @@ struct ComportamientoCargado {
     std::vector<ReflejoScripts::DefCampo> campos; // reflexion del comportamiento
     std::string mtimeFuente;                  // para hot reload (idempotente)
     bool cargado = false;
+    bool falloRuntime = false;
+    std::string callbackFallido;
+    std::string errorRuntime;
 
     bool valido() const { return cargado && instancia != nullptr; }
 };

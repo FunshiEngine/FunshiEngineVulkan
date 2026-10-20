@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,13 +24,14 @@
 // Jerarquia de errores del pipeline de shaders. El patron es el mismo que en
 // AssetException: una excepcion explicita (con stack trace) en lugar de
 // "std::cerr + continuar con estado roto". Quien construye un ShaderProgram
-// sabre por que fallo (stage + log del driver) si el driver no soporta GLSL.
+// sabre por que fallo (etapa + log del compilador) si el backend no puede
+// compilar los shaders.
 class ShaderUnavailableException : public RuntimeException {
 public:
     ShaderUnavailableException()
-        : RuntimeException("OpenGL moderna no disponible: no se pudieron "
-                           "cargar las funciones de shaders/VAO (segun "
-                           "GLFuncs). Se usa el pipeline inmediato.") {}
+        : RuntimeException("El backend grafico no esta disponible: no se "
+                           "pudieron preparar los shaders.",
+                           "ShaderUnavailableException") {}
 };
 
 class ShaderCompileException : public RuntimeException {
@@ -38,14 +39,14 @@ public:
     ShaderCompileException(const std::string& stage,
                            const std::string& infoLog)
         : RuntimeException("Error de compilacion del shader " + stage + ":\n" +
-                           infoLog) {}
+                           infoLog, "ShaderCompileException") {}
 };
 
 class ShaderLinkException : public RuntimeException {
 public:
     ShaderLinkException(const std::string& infoLog)
         : RuntimeException("Error de linkeo del programa de shaders:\n" +
-                           infoLog) {}
+                           infoLog, "ShaderLinkException") {}
 };
 
 #endif

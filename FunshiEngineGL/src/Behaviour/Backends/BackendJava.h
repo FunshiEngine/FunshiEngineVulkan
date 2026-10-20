@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +45,9 @@ public:
                           GameObject* owner, float deltaTime) override;
     void llamarDetener(ComportamientoCargado& comportamiento,
                        GameObject* owner) override;
+    void llamarContacto(ComportamientoCargado& comportamiento,
+                        GameObject* owner, Collider* propio, Collider* otro,
+                        TipoContacto tipo) override;
 
     void inyectar(ComportamientoCargado& comportamiento,
                   const std::vector<ReflejoScripts::ValorCampo>& valores) override;

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +23,10 @@
 using Rendering::Backend::IRenderBackend;
 using Rendering::Backend::kInvalidHandle;
 
-ShaderProgram ShaderProgram::fromSource(const char* vertexSource,
-                                        const char* fragmentSource) {
+ShaderProgram ShaderProgram::create(Rendering::Contrato::ShaderKind kind) {
     ShaderProgram program;
-    program.program_ = Rendering::Backend::activeBackend().createProgram(
-        vertexSource, fragmentSource);
+    program.program_ =
+        Rendering::Backend::activeBackend().createProgram(kind);
     return program;
 }
 

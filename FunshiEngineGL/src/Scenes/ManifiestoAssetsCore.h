@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,11 +22,12 @@
 #include <array>
 #include <map>
 #include <string>
+#include <vector>
 
 // Nucleo puro y HEADLESS del manifiesto de assets de la escena
 // (Memory/Binarios/SceneAssets.json). No conoce GameObject ni la escena:
 // trabaja sobre «EntradaAssets», la foto de los paths de asset de un objeto
-// (malla + 4 texturas + dll de script).
+// (malla + 4 texturas + dll de script + las 6 caras del cubemap del Skybox).
 //
 // El manifiesto es un add-on de la serializacion binaria: NO reemplaza al
 // .db, sino que centraliza las rutas de asset para (1) gestionar los renames
@@ -41,7 +42,15 @@ struct EntradaAssets {
     std::string malla;
     // Cuatro slots de textura del Material (diffuse, specular, normal, emision).
     std::array<std::string, 4> texturas;
-    std::string script;
+    // Scripts del objeto: soporte para multiples scripts por objeto.
+    std::vector<std::string> scripts;
+    // Skybox cubemap: 6 caras (+X, -X, +Y, -Y, +Z, -Z)
+    std::string caraMasX;
+    std::string caraMenosX;
+    std::string caraMasY;
+    std::string caraMenosY;
+    std::string caraMasZ;
+    std::string caraMenosZ;
 
     EntradaAssets() { texturas.fill(std::string()); }
 };
@@ -58,8 +67,8 @@ public:
 
     // Lee el archivo JSON. Devuelve false si no existe o esta corrupto (nunca
     // lanza); en ese caso `entradas` queda sin tocar. La lectura es tolerante:
-    // un objeto sin `malla`/`texturas`/`script` solo aporta los campos que
-    // trae, y una entrada sin id numerico se descarta.
+    // un objeto sin `malla`/`texturas`/`script` ni caras solo aporta los campos
+    // que trae, y una entrada sin id numerico se descarta.
     static bool leerArchivo(const std::string& ruta,
                             std::map<int, EntradaAssets>& entradas);
 

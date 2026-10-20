@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,9 @@
 #define PHYSICSENGINE_H
 
 #include <memory>
+#include <vector>
 
+#include "ContactoFisico.h"
 class IPhysicsBackend;
 class RigidBody;
 
@@ -41,6 +43,9 @@ public:
     void stepSimulation(float deltaTime);
     void addRigidBody(RigidBody* body);
     void removeRigidBody(RigidBody* body);
+    std::vector<EventoContacto> tomarEventosContacto();
+    void fijarGravedad(float x, float y, float z);
+    void gravedad(float& x, float& y, float& z) const;
 
 private:
     std::unique_ptr<IPhysicsBackend> backend_;

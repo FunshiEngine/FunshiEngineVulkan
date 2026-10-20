@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,4 +50,15 @@ std::shared_ptr<Image> StbImageLoader::load(const std::string& path) {
     stbi_image_free(data);
     stbi_set_flip_vertically_on_load(0);
     return image;
+}
+
+bool StbImageLoader::dimensiones(const std::string& path, int& ancho,
+                                  int& alto) {
+    int x = 0, y = 0, canales = 0;
+    if (!stbi_info(path.c_str(), &x, &y, &canales) || x <= 0 || y <= 0) {
+        return false;
+    }
+    ancho = x;
+    alto = y;
+    return true;
 }

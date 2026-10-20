@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,4 +39,23 @@ void PhysicsEngine::addRigidBody(RigidBody* body) {
 
 void PhysicsEngine::removeRigidBody(RigidBody* body) {
     if (backend_) backend_->removeRigidBody(body);
+}
+
+std::vector<EventoContacto> PhysicsEngine::tomarEventosContacto() {
+    return backend_ ? backend_->tomarEventosContacto()
+                    : std::vector<EventoContacto>{};
+}
+
+void PhysicsEngine::fijarGravedad(float x, float y, float z) {
+    if (backend_) backend_->fijarGravedad(x, y, z);
+}
+
+void PhysicsEngine::gravedad(float& x, float& y, float& z) const {
+    if (backend_) {
+        backend_->gravedad(x, y, z);
+        return;
+    }
+    x = 0.0f;
+    y = -1.0f;
+    z = 0.0f;
 }

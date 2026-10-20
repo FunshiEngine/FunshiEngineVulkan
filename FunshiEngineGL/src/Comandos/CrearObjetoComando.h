@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include "IComando.h"
 #include <memory>
 #include <string>
+#include <vector>
 
 class EditorController;
 class SceneRegistry;
@@ -33,7 +34,7 @@ private:
     EditorController* editorController;
     SceneRegistry* sceneRegistry;
     std::unique_ptr<Modelos3D> modelo;
-    std::unique_ptr<GameObject> restaurado;
+    std::vector<std::unique_ptr<GameObject>> guardados;
     GameObject* parent;
     int createdId = -1;
     std::string nombreObjeto;

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,8 @@
 class TextureNotFoundException : public RuntimeException {
 public:
     explicit TextureNotFoundException(const std::string& texturePath)
-        : RuntimeException("Textura no encontrada: " + texturePath) {}
+        : RuntimeException("Textura no encontrada: " + texturePath,
+                           "TextureNotFoundException") {}
 };
 
 // La imagen pudo localizarse pero fallo su decode (archivo corrupto, formato
@@ -37,7 +38,8 @@ public:
     TextureLoadException(const std::string& texturePath,
                          const std::string& detail = "")
         : RuntimeException("No se pudo cargar la textura '" + texturePath + "'" +
-                           (detail.empty() ? std::string() : ": " + detail)) {}
+                           (detail.empty() ? std::string() : ": " + detail),
+                           "TextureLoadException") {}
 };
 
 #endif

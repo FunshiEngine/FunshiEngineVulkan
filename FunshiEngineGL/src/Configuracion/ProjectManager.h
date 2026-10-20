@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,11 +19,12 @@
 #ifndef PROJECT_MANAGER_H
 #define PROJECT_MANAGER_H
 
-#include <string>
-#include <vector>
-#include <optional>
-
 #include "ProjectPaths.h"
+
+#include <optional>
+#include <string>
+#include <system_error>
+#include <vector>
 
 // Gestiona proyectos: descubrimiento, CRUD, migración de estructura antigua.
 // Sin side effects en constructores; toda E/S es explícita.
@@ -41,10 +42,6 @@ public:
     // Idempotente: seguro llamar al arrancar.
     static void asegurarEstructuraBase();
 
-    // Crea proyecto "NuevoProyecto" si Proyects/ está vacío.
-    // Devuelve true si se creó, false si ya había proyectos o fallo.
-    static bool crearProyectoPorDefecto();
-
     // Lista proyectos descubiertos en Proyects/ (solo directorios válidos).
     static std::vector<Proyecto> descubrirProyectos();
 
@@ -54,6 +51,12 @@ public:
     // Crea un nuevo proyecto con estructura completa.
     // Devuelve false si nombre inválido, ya existe, o fallo E/S.
     static bool crearProyecto(const std::string& nombre);
+
+    // Crea un proyecto nuevo sin migrar ni alterar un directorio existente.
+    // La carpeta se reserva de forma exclusiva dentro de la raiz fija del motor.
+    // Si falla la preparacion, solo intenta retirar las carpetas vacias que creo.
+    static bool crearProyectoNuevo(const std::string& nombre,
+                                   std::error_code& error);
 
     // Renombra proyecto en disco: <viejo> -> <nuevo> (incluye src<viejo> -> src<nuevo>).
     // Devuelve false si origen no existe, destino existe, nombre inválido, o fallo E/S.

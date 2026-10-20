@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,13 +32,15 @@ namespace MotorScript {
 // (ScriptGameObject.cpp) y entregada al comportamiento en su creacion.
 //
 // Convencion de versionado: APPEND-ONLY. Los campos nuevos se agregan SIEMPRE
-// al final; los existentes no se reordenan ni se cambian de tipo, de modo que
-// un script compilado contra una version anterior siga leyendo la misma
-// direccion de memoria para los miembros viejos. Los scripts comprueban
-// `api->version >= N` antes de usar miembros introducidos en la version N.
+// al final y los existentes no se reordenan ni se cambian de tipo. Esto permite
+// versionar la tabla; no promete compatibilidad binaria entre versiones del
+// motor. Incrementar esta version cuando cambie el contrato/API/runtime: el
+// cache la incorpora y recompila los scripts con el motor actualizado.
+constexpr int versionRuntimeScript = 11;
 struct ApiScriptGameObject {
     // --- v1 (original) ---
     const char* (*nombre)(const void* objeto);
+    // Posicion y escala son valores locales del componente Transform.
     float (*posicionX)(const void* objeto);
     float (*posicionY)(const void* objeto);
     float (*posicionZ)(const void* objeto);
@@ -49,8 +51,8 @@ struct ApiScriptGameObject {
     void (*imprimirConsola)(const char* texto);
 
     // --- v2: getters de transform que faltaban (rotacion y escala) ---
-    // Rotacion en el formato canonico del componente: angulo (radianes) sobre
-    // un eje. Consistente con fijarRotacionEjes (angulo + eje).
+    // El angulo se expone en radianes y el eje es unitario. El componente
+    // Transform conserva internamente el angulo en grados.
     float (*rotacionAngulo)(const void* objeto);
     float (*rotacionEjeX)(const void* objeto);
     float (*rotacionEjeY)(const void* objeto);
@@ -60,8 +62,38 @@ struct ApiScriptGameObject {
     float (*escalaY)(const void* objeto);
     float (*escalaZ)(const void* objeto);
 
-    // Version de la tabla (siempre al final). Permite a un script compilado
-    // contra una version vieja hacer guardas: `if (api->version >= 2) ...`.
+    // --- v3: movimiento de cuerpos fisicos ---
+    // Devuelve true si el objeto tiene RigidBody; la velocidad es mundial.
+    bool (*fijarVelocidadHorizontal)(void* objeto, float x, float z);
+    // Solo salta si el cuerpo activo esta apoyado.
+    bool (*saltar)(void* objeto, float velocidad);
+
+    // --- v4: tags y datos de contacto ---
+    const char* (*etiqueta)(const void* objeto);
+    bool (*tieneEtiqueta)(const void* objeto, const char* etiqueta);
+    void* (*objetoDeCollider)(const void* collider);
+
+    // --- v5: propiedades fisicas del RigidBody (si no hay cuerpo, los
+    // getters devuelven 0/false y los setters devuelven false) ---
+    // Masa (0 = estatico).
+    float (*masa)(const void* objeto);
+    bool (*fijarMasa)(void* objeto, float masa);
+    // Gravedad por cuerpo: sin ella el cuerpo no cae; la escala multiplica
+    // la gravedad global del mundo (1 = igual, 0 = flota).
+    bool (*usaGravedad)(const void* objeto);
+    bool (*fijarUsoGravedad)(void* objeto, bool usar);
+    float (*escalaGravedad)(const void* objeto);
+    bool (*fijarEscalaGravedad)(void* objeto, float escala);
+    // Friccion de contacto (0 = desliza).
+    float (*friccion)(const void* objeto);
+    bool (*fijarFriccion)(void* objeto, float friccion);
+    // Freeze por ejes (eje: 0 = X, 1 = Y, 2 = Z).
+    bool (*posicionCongelada)(const void* objeto, int eje);
+    bool (*fijarFreezePosicion)(void* objeto, bool x, bool y, bool z);
+    bool (*rotacionCongelada)(const void* objeto, int eje);
+    bool (*fijarFreezeRotacion)(void* objeto, bool x, bool y, bool z);
+
+    // Version de la tabla (siempre al final).
     int version;
 };
 
@@ -77,6 +109,9 @@ const ApiScriptGameObject* tablaApi();
 class AudioEngine;
 class SceneRegistry;
 class InputScripts;
+class EstadoInterfaces;
+class PhysicsEngine;
+class EditorController;
 
 namespace MotorScript {
 
@@ -102,10 +137,80 @@ struct ScriptServices {
     // el objeto viva (no crear/destruir objetos desde scripts aun).
     void* (*objetoPorNombre)(const char* nombre);
 
-    // Consulta de teclado (cadenas GLFW key names, ej. "W", "SPACE", "LEFT_SHIFT").
+    // --- v3: otras formas de resolver referencias a objetos ---
+    // Busca por id de escena (GameObject::getId); primer coincidente o nullptr.
+    void* (*objetoPorId)(int id);
+    // Busca por tag el primer objeto que lo tenga; nullptr si ninguno.
+    // Util para referencias opcionales (ej. la camara de un controlador).
+    void* (*objetoPorEtiqueta)(const char* etiqueta);
+
+    // Consulta de teclado (nombres GLFW, ej. "W", "D0", "SPACE").
     bool (*teclaSostiene)(const char* tecla);      // mantenida apretada
     bool (*teclaPresionada)(const char* tecla);    // este frame (edge press)
     bool (*teclaSoltada)(const char* tecla);       // este frame (edge release)
+
+    // Delta acumulado del mouse en pixeles durante el frame actual (v2).
+    float (*deltaMouseX)();
+    float (*deltaMouseY)();
+
+    // --- v4: gravedad global y gestion de objetos ---
+    // Gravedad del mundo fisico (la que escalan los cuerpos que la usan).
+    void (*fijarGravedadGlobal)(float x, float y, float z);
+    float (*gravedadGlobalX)();
+    float (*gravedadGlobalY)();
+    float (*gravedadGlobalZ)();
+    // Crea un objeto vacio con ese nombre (o uno por defecto si es nulo/vacio)
+    // como hijo de `padre` (raiz si es nulo). Devuelve el puntero de inmediato
+    // para configurarlo, pero entra a la escena al final del frame: el
+    // puntero es valido mientras el objeto viva. La fisica del frame en curso
+    // no lo ve; la del siguiente, si.
+    void* (*crearObjeto)(const char* nombre, void* padre);
+    // Marca para borrar al final del frame (seguro incluso sobre si mismo).
+    bool (*destruirObjeto)(void* objeto);
+    // Copia profunda (componentes incluidos) como hija de `padre` (raiz si es
+    // nulo). Misma validez diferida que crearObjeto. Los scripts copiados
+    // compilan a demanda en su primera actualizacion.
+    void* (*clonarObjeto)(const void* original, void* padre);
+    // Agrega collider (falla si ya tiene uno) y cuerpo (falla si no hay
+    // collider o ya tiene cuerpo). Entran en vigor al final del frame.
+    bool (*agregarColliderEsfera)(void* objeto, float radio);
+    bool (*agregarColliderCubo)(void* objeto, float radio);
+    bool (*agregarRigidBody)(void* objeto, float masa);
+
+    // --- v5: sistema de prefabs ---
+    // Instancia un prefab por nombre como hijo de `padre` (raiz si nulo).
+    // Devuelve el puntero a la raiz de la instancia (valido al final del frame).
+    void* (*instanciarPrefab)(const char* nombre, void* padre);
+    // Lista los nombres de prefabs disponibles en la biblioteca.
+    // Devuelve un array terminado en nullptr (el llamador no debe liberar).
+    // El array y los nombres que apunta son validos solo hasta la llamada
+    // siguiente: copiarlos en el acto si deben retenerse.
+    const char** (*listarPrefabs)();
+
+    // --- v6: interfaces web (HUD) ---
+    // Manipulacion de las interfaces de la escena desde los scripts. El handle
+    // (`interfaz`) es opaco: un puntero al InterfaceComponent del objeto que la
+    // tiene. En C++ se obtiene con un campo REFLECT_COMPONENTE (arrastrando el
+    // componente a la propiedad) o con interfazDeObjeto(); en Java, con
+    // interfazDeObjeto. Toda funcion tolera un handle nulo (no hace nada).
+    // Handle de la interfaz del objeto `nombreObjeto`, o nullptr si no existe
+    // o no tiene InterfaceComponent.
+    void* (*interfazDeObjeto)(const char* nombreObjeto);
+    // Estado de visibilidad de la interfaz.
+    bool (*interfazActiva)(const void* interfaz);
+    void (*interfazEstablecerActiva)(void* interfaz, bool activa);
+    // Reemplaza el arbol de estado que el motor entrega a la interfaz. `json`
+    // debe ser un objeto JSON; devuelve false si el texto no es valido.
+    bool (*interfazEstablecerEstado)(void* interfaz, const char* jsonEstado);
+    // Fija un valor en la ruta indicada (JSON Pointer, p. ej. "/jugador/vida";
+    // se acepta sin la barra inicial). Crea los objetos intermedios que falten.
+    // `valorJson` es un literal JSON de cualquier tipo.
+    bool (*interfazEstablecerValor)(void* interfaz, const char* clave,
+                                    const char* valorJson);
+    // Valor que la interfaz devolvio al motor en la ruta dada, como texto JSON,
+    // o nullptr si no existe. El puntero vale hasta la proxima lectura de la
+    // misma interfaz.
+    const char* (*interfazValor)(void* interfaz, const char* rutaJson);
 
     // Version de la tabla (siempre al final).
     int version;
@@ -114,11 +219,21 @@ struct ScriptServices {
 // Tabla de servicios de escena para scripts (audio, busqueda, teclado).
 const ScriptServices* tablaServicios();
 
-// Cablea el contexto real de la escena. GameScene la llama al entrar/salir de
-// Play (con nullptr al salir). Es un punto de integracion unico, sin que
-// ScriptGameObject dependa de las cabeceras de Audio/Scenes/Input.
+// Cablea el contexto real de la escena. GameScene la llama al entrar en
+// simulacion y, despues de onStop, con todos los punteros nulos para
+// desconectar; al desconectar tambien se detienen los handles de audio creados
+// por scripts y se descartan las peticiones de objetos sin aplicar.
+// ScriptGameObject no depende de las cabeceras de Audio/Scenes/Input.
 void inyectarServiciosScript(AudioEngine* audio, SceneRegistry* escena,
-                             InputScripts* input);
+                             InputScripts* input,
+                             PhysicsEngine* fisica = nullptr,
+                             EditorController* editor = nullptr,
+                             EstadoInterfaces* interfaces = nullptr);
+
+// Aplica las peticiones de crear/clonar/destruir/agregar acumuladas por los
+// scripts durante el frame. La llama GameScene al terminar de actualizar los
+// objetos (mutar la escena a mitad del recorrido invalidaria el iterador).
+void procesarPeticionesObjetos();
 
 } // namespace MotorScript
 

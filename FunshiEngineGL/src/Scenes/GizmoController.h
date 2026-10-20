@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,8 +110,9 @@ public:
     // Fase 2 (solo con el editor activo): resuelve el objetivo (GizmoTarget
     // externo o transform del objeto/collider seleccionado) y dibuja/manipula
     // el gizmo, tomando la foto inicial al empezar el arrastre y registrando un
-    // TransformComando al soltarlo. Sincroniza RigidBody al terminar.
-    void dibujarYRastrear(ImGuiIO& io, CameraComponent* camara);
+    // TransformComando al soltarlo. Sincroniza RigidBody al terminar. Con
+    // modo2D el gizmo de rotacion se limita al eje Z del plano.
+    void dibujarYRastrear(ImGuiIO& io, CameraComponent* camara, bool modo2D);
 
     // Picking sobre la escena 3D: devuelve el GameObject bajo un punto de
     // pantalla (o nullptr). API publica preservada de GameScene.

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,9 +22,8 @@
 #include "../../../Objetos/Componentes/CameraComponent.h"
 #include <imgui.h>
 
-SettingsCamera::SettingsCamera(GameObject* gameObject) {
-	this->gameObject = gameObject;
-}
+SettingsCamera::SettingsCamera(GameObject* gameObject)
+    : SettingsComponent(demangle(typeid(CameraComponent).name())), gameObject(gameObject) {}
 
 void SettingsCamera::showDataComponent() {
 	CameraComponent* camera = gameObject->getComponent<CameraComponent>();
@@ -32,9 +31,31 @@ void SettingsCamera::showDataComponent() {
 
 	ImGui::Text("===Camara===");
 
-	float fov = camera->getFov();
-	if (ImGui::SliderFloat("FOV", &fov, 1.f, 120.f))
-		camera->setFov(fov);
+	// En 2D la camara es ortografica por contrato del proyecto: no se ofrece
+	// cambiar la proyeccion ni el FOV, solo el zoom (ortoSise) y el plano.
+	const bool es2D = dimension_ == DimensionProyecto::DosD;
+	if (!es2D) {
+		int proyeccion = static_cast<int>(camera->getProjection());
+		const char* tipos[] = {"Perspectiva", "Ortografica"};
+		if (ImGui::Combo("Proyeccion", &proyeccion, tipos, 2))
+			camera->setProjection(
+				proyeccion == static_cast<int>(
+								  CameraComponent::Projection::Orthographic)
+					? CameraComponent::Projection::Orthographic
+					: CameraComponent::Projection::Perspective);
+	}
+
+	if (camera->getProjection() == CameraComponent::Projection::Orthographic) {
+		float orthoSize = camera->getOrthoSize();
+		if (ImGui::SliderFloat("Zoom (ortho)", &orthoSize, 0.1f, 100.f))
+			camera->setOrthoSize(orthoSize);
+	}
+
+	if (!es2D) {
+		float fov = camera->getFov();
+		if (ImGui::SliderFloat("FOV", &fov, 1.f, 120.f))
+			camera->setFov(fov);
+	}
 
 	float nearPlane = camera->getNearPlane();
 	if (ImGui::SliderFloat("Near", &nearPlane, 0.01f, 10.f))
@@ -51,8 +72,4 @@ void SettingsCamera::showDataComponent() {
 	bool pintar = camera->getPintar();
 	if (ImGui::Checkbox("Vista previa", &pintar))
 		camera->setPintar(pintar);
-}
-
-Component* SettingsCamera::getComponent() {
-	return gameObject->getComponent<CameraComponent>();
 }

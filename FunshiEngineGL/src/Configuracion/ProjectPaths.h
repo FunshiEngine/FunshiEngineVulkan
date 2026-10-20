@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,14 @@
 #endif
 
 #include <string>
+
+// La eleccion de raiz de datos, aislada para poder probarla con rutas de
+// verdad (ver el .cpp): devuelve rutaOriginal si ahi se puede escribir, si no
+// rutaUsuario cuando esa si sirve, y si ninguna sirve vuelve a rutaOriginal.
+namespace ProjectPathsDetalle {
+std::string elegirRaizDeDatos(const std::string& rutaOriginal,
+                              const std::string& rutaUsuario);
+} // namespace ProjectPathsDetalle
 
 namespace ProjectPaths {
 
@@ -78,10 +86,10 @@ std::string directorioProyecto(const std::string& nombreProyecto);
 // Subcarpetas del proyecto
 std::string directorioMemory(const std::string& nombreProyecto);
 std::string directorioBinarios(const std::string& nombreProyecto);
-std::string directorioInterfaces(const std::string& nombreProyecto);
 std::string nombreRaizSrc(const std::string& nombreProyecto);
 std::string directorioSrc(const std::string& nombreProyecto);
 std::string directorioSonidos(const std::string& nombreProyecto);
+std::string directorioScripts(const std::string& nombreProyecto);
 
 // Archivos de configuracion
 std::string rutaConfiguracionGeneral();        // <Configuraciones>/Configuracion.json

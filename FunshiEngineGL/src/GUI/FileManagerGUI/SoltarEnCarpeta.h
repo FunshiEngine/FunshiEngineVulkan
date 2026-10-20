@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,15 +46,22 @@ inline bool ctrlOCmd() {
 // Suelta el elemento arrastrado (payload "ARCHIVO_PATH", con la ruta absoluta
 // en `origen`) dentro de la carpeta `destFolder`.
 //
-// Semantica: por defecto MUEVE, con Ctrl copia. Es lo que espera cualquiera que
-// venga de un explorador de archivos, y evita el susto de ver como desaparece
-// un archivo de su carpeta. El motivo real esta en el aviso del evento, abajo.
+// Semantica de `copiar`: la decide cada destino. El grid la ata a Ctrl/Cmd
+// (soltar mueve, con Ctrl copia) y el arbol de carpetas la fija en false:
+// soltar ahi es cortar y pegar. Mover es lo que espera cualquiera que venga de
+// un explorador de archivos, y evita el susto de ver como desaparece un
+// archivo de su carpeta. El motivo real esta en el aviso del evento, abajo.
 //
 // Mover cambia la ruta, asi que hay que avisar al resto del editor: se publica
 // ArchivosReubicados con la ruta anterior y la nueva, que es lo que ya consume
 // el gestor de proyectos para reescribir las referencias de la escena (mallas,
 // texturas, fuentes de script) y persistirlas. Sin ese aviso, mover un asset
 // dejaria la escena apuntando a la ruta vieja.
+//
+// Si `origenCarpetaOut` no es nullptr, se escribe ahi la carpeta que contenia
+// al elemento movido/copiado (padre de `origen`). Esto permite al llamador
+// invalidar el cache del grid tanto en la carpeta origen como en la destino
+// (invalidacion explicita, no depender del mtime).
 //
 // Devuelve true si la operacion se completo. Quien la llama decide que invalidar
 // de su cache: el grid relee el listado de la carpeta visible, el arbol solo
@@ -63,17 +70,24 @@ inline bool soltarEnCarpeta(FileManager* fileManager,
                             EditorEventBus* eventoArchivos,
                             const std::string& origen,
                             const std::string& destFolder,
-                            bool copiar) {
+                            bool copiar,
+                            std::string* origenCarpetaOut = nullptr) {
     if (fileManager == nullptr || origen.empty() || destFolder.empty())
         return false;
 
-    const std::string::size_type sep = origen.find_last_of("/\\");
+    // El ultimo separador que SEPARA: en Linux la barra invertida es un
+    // caracter mas del nombre, y tomarla por separador renombraba el archivo
+    // arrastrado y reportaba como padre una carpeta que no existe.
+    const std::string::size_type sep = indiceSeparadorFinal(origen);
     const std::string nombre =
         (sep != std::string::npos) ? origen.substr(sep + 1) : origen;
     const std::string finalDest = destFolder + PATH_SEP + nombre;
     // Soltar sobre la carpeta que ya contiene al elemento no hace nada: sin
     // este chequeo el mover intentaria renombrar un archivo sobre si mismo.
     if (finalDest == origen) return false;
+
+    // Carpeta origen (padre del elemento) para invalidacion de cache del grid
+    const std::string origenCarpeta = (sep != std::string::npos) ? origen.substr(0, sep) : "";
 
     const bool esCarpeta = fileManager->esDirectorio(origen);
     const bool ok = copiar
@@ -93,8 +107,14 @@ inline bool soltarEnCarpeta(FileManager* fileManager,
     }
 
     // El arbol de carpetas cambia si lo que se movio es una carpeta; los
-    // archivos no aparecen ahi.
-    if (esCarpeta) fileManager->getSelection()->contadorCambios++;
+    // archivos no aparecen ahi. PERO: para que la vista de arbol se rescanee
+    // tambien cuando se mueve un archivo (y el grid invalide su cache), siempre
+    // incrementamos contadorCambios en cualquier operacion exitosa.
+    fileManager->getSelection()->contadorCambios++;
+
+    // Devolver carpeta origen para invalidacion explicita del grid
+    if (origenCarpetaOut != nullptr) *origenCarpetaOut = origenCarpeta;
+
     return true;
 }
 

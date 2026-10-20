@@ -10,9 +10,22 @@ Guía rápida para agentes (y humanos) que trabajen en este repositorio.
 cmake -S FunshiEngineGL -B FunshiEngineGL/build
 cmake --build FunshiEngineGL/build -j$(nproc)
 
-# Ejecutar la suite de tests (18 targets headless + scripts-java si hay JDK)
+# Ejecutar la suite de tests (17 targets headless + scripts-java si hay JDK)
 cd FunshiEngineGL/build && ctest --output-on-failure
 ```
+
+- **`cmake` sin `-DCMAKE_BUILD_TYPE` fuerza Debug** (`CMakeLists.txt`), y en
+  Debug se activan ASan+UBSan para compiladores GNU/Clang. Con el GCC de MSYS2
+  eso **no linkea**: el toolchain no trae los runtimes de sanitizer. Para un
+  build de trabajo normal y para igualar la CI:
+
+  ```bash
+  cmake -S FunshiEngineGL -B FunshiEngineGL/build \
+      -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=OFF -DFUNSHI_JAVA=ON
+  ```
+
+  Con el generador de Visual Studio el sanitizer no se activa
+  (`CMAKE_CXX_COMPILER_ID` no es GNU/Clang), así que ahí el flag es inofensivo.
 
 - **Build y tests como parte del cambio**: al tocar código fuente (o `CMakeLists.txt`
   y tests), revisar SIEMPRE si hay que actualizar el build y la suite: el engine
@@ -20,6 +33,124 @@ cd FunshiEngineGL/build && ctest --output-on-failure
   sus fuentes explícitamente; un `.cpp`/`.h` nuevo, un include, una dependencia,
   un `add_test` o el conteo de comprobaciones de un test existente pueden quedar
   fuera de sincronía. Ajustarlos en el mismo commit que el código que los motiva.
+
+## Pruebas
+
+- **Autoría de un test headless**: seguir el patrón de
+  `tests/ModelSerializationTests.cpp` — macro `CHECK(cond, msg)` definida en el
+  propio archivo, `TempPruebas::CarpetaPrueba` para una carpeta temporal que se
+  limpia sola al salir (RAII), y cierre con
+  `std::cout << (fallos == 0 ? "OK" : "FALLOS") << ": " << ... << " comprobaciones"`,
+  saliendo con 0 o 1.
+- **Código de salida 77 = *skipped*, no fallo**. Lo esperado: para
+  `scripts-runtime-tests` cuando el toolchain es MSVC (necesita `cl.exe` con el
+  entorno de Visual Studio; con GCC/MinGW corre en cualquier SO) y para
+  `scripts-java-tests` si no hay JDK resoluble (`JAVAC`/`JAVA_HOME`/PATH).
+  `ctest` los reporta como *skipped* aparte; no son tests rotos. El skip es por
+  **familia de toolchain**, nunca por sistema operativo (H-14).
+
+## Depuración de bugs: instrumentación y validación
+
+Cuando un bug no se resuelve leyendo el código, se depura con instrumentación y
+evidencia: reproducirlo de forma **determinista**, aislar la causa cambiando
+**una sola variable** por corrida y comprobar que el fix lo cierra en **más de
+una circunstancia** (distintos estados, órdenes de pasos y plataformas). Esta
+sección es el "cómo" de la evidencia que pide el análisis de bugs: la cadena
+`síntoma → evidencia → causa → fix → test` se sostiene con estas técnicas, no
+con suposiciones.
+
+- **Bajar el fallo a un test antes que a una corrida manual**: si el síntoma se
+  observa sin UI (lógica, rutas, serialización, ciclo de compilación/carga de
+  scripts), se escribe un test headless (ver "Pruebas") y se exige **rojo antes
+  y verde después**: un test que pasa con el bug y con el fix no prueba nada.
+  El test queda además como regresión permanente de esa causa.
+- **Sondas y laboratorios en directorios locales ignorados por git**: los
+  artefactos desechables de una depuración —sondas C++ que compilan y corren
+  sueltos (`FunshiEngineGL/sondas/*.cpp`), scripts de observación, volcados de
+  log, copias locales de proyecto/escena usadas como laboratorio de
+  experimentación— se viven en carpetas registradas en `.gitignore`
+  (`FunshiEngineGL/sondas/`, `vgcore.*`). Producen la evidencia del análisis y
+  se quedan en local: no son código del motor ni del juego, no entran en
+  commits y se retiran cuando el análisis cierra.
+- **Experimentos deterministas**: para que dos corridas sean comparables hay que
+  fijar todo lo que no es la variable bajo prueba — mismo proyecto/escena y
+  estado inicial, mismo cwd (las rutas relativas se resuelven contra él), mismo
+  orden de pasos, timeouts acotados —. Las hipótesis se comparan con un
+  experimento A/B: con y sin la condición sospechada, **una sola condición
+  cambiada por corrida**, nunca varias a la vez.
+- **Comparar hechos, no apariencias**: bytes, mtimes y tamaños con las
+  herramientas del toolchain (`cmp`, `od`/`xxd`, `stat`, `grep -a`) y exit
+  codes, en vez de "se veía igual". El log del motor es fuente primaria: cuando
+  algo se descarta o se elige un camino, que el log diga **por qué** (prefijo
+  del módulo + causa técnica), no solo qué pasó.
+- **Sanitizadores en C++**: la opción `ENABLE_ASAN` de `CMakeLists.txt`
+  (por defecto `ON`) agrega `-fsanitize=address` y `-fsanitize=undefined` con
+  `-fno-omit-frame-pointer -O1 -g` cuando el compilador es GNU/Clang. Un fix de
+  memoria —fuga, doble liberación, use-after-free, buffer overflow— debe correr
+  contra un build con sanitizer antes de darse por cerrado. Ojo: con el GCC de
+  MSYS2 esos runtimes no linkean (ver "Comandos esenciales"), por eso los
+  builds de trabajo y la CI usan `-DENABLE_ASAN=OFF`; cuando el toolchain local
+  no los soporte, el build con sanitizer se hace donde sí compile (Linux con
+  GCC/Clang), idealmente sobre los targets de test que cubren el caso.
+- **Otras herramientas**: `gdb`/`lldb` (breakpoint y backtrace) cuando la causa
+  no se alcanza por log; en Linux, `valgrind` como respaldo del sanitizer; y la
+  compilación aislada de la sonda o del test que reproduce el caso —sin compilar
+  todo el engine— para iterar rápido.
+- **Varias circunstancias, un solo fix**: antes de cerrar, reproducir el caso
+  también en las variantes que existan —distintos estados de la máquina, con y
+  sin interacción previa, rutas con y sin espacios, plataforma cuando esté
+  disponible—. Un fix validado en una sola corrida sigue siendo una hipótesis.
+
+## Depuración por orden de dependencia
+
+Cuando un lote de correcciones tiene varios ítems (bugs, hallazgos nuevos,
+mejoras), la lista de tareas se arma **por orden de dependencia**, no por el
+orden en que se descubrieron los problemas ni por su severidad:
+
+1. **Primero, las bases**: los fixes de los que cuelgan otros —los que tocan el
+   mismo código, fijan un contrato que los demás heredan o habilitan un camino
+   que otros dan por supuesto—, aunque su severidad sea menor que la de sus
+   dependientes. Un ítem que hereda el arreglo de otro va después de ese otro,
+   sin excepción.
+2. **Después, los independientes**: los que no tocan a nadie, en cualquier
+   orden. Si un fix puede revelar problemas nuevos (p. ej. un test que pasa a
+   correr donde antes se saltaba), hacerlo antes que los que dependan de que
+   el alcance esté cerrado.
+3. **Al final, los de mayor riesgo**: los que reescriben lo ya validado o
+   tocan caminos críticos; siempre después de que sus bases estén commiteadas
+   y verificadas.
+
+Reglas de trabajo sobre la lista:
+
+- Es explícita y se trabaja contra ella, no de memoria (ver "Lista de tareas
+  antes de escribir código"). Cada ítem se marca en cuanto queda hecho y
+  verificado, no todo al final.
+- Un ítem bloqueado por otro se espera, no se salta: saltar el orden deja
+  fixes aplicados sobre bases que todavía pueden cambiar.
+- Al aparecer un hallazgo nuevo, insertarlo en la posición que le corresponda
+  según sus dependencias e indicar de qué ítem cuelga, en vez de agregarlo al
+  final de la cola.
+- El orden se documenta donde viva el lote (plan de trabajo, issue, tabla de
+  secuencia de commits), para que quien retome el trabajo sepa por dónde
+  sigue.
+
+## Ejecutar el editor para prueba manual
+
+El criterio de aceptación de un fix lo define el usuario probando la app real
+(ver "NO confirmar fixes hasta validación del usuario"), así que hace falta
+poder lanzarla:
+
+```bash
+cd FunshiEngineGL && ./build/FunshiEngineGL       # Linux
+cd FunshiEngineGL && ./build/FunshiEngineGL.exe   # Windows
+```
+
+- Lanzarlo **desde `FunshiEngineGL/`**: los assets y las rutas relativas se
+  resuelven contra el cwd.
+- La salida (stdout y stderr) se redirige a un archivo por arranque en
+  `logs/`, junto al ejecutable —`FunshiEngineGL_<AAAAMMDD_HHMMSS>.log`, con
+  timestamp **UTC**—, así que el editor no abre consola. Es lo primero que hay
+  que mirar cuando algo falla.
 
 ## Convenciones del código
 
@@ -30,11 +161,33 @@ cd FunshiEngineGL/build && ctest --output-on-failure
   Apache 2.0 (ver cabecera de cualquier `.h`/`.cpp` existente como modelo) o
   al menos `SPDX-License-Identifier: Apache-2.0`.
 - **Estilo**: 4 espacios, llaves en la línea siguiente para clases/funciones.
+- **Sin referencias de gestión en los textos del proyecto.** Los comentarios
+  del código, la documentación técnica (`README.md`, `MANUAL_DE_USO.md`,
+  `PROJECT_STRUCTURE.md`, `DOCUMENTACION.md`, `DocuTecnicoBugs.md` y los
+  documentos de diseño), los mensajes de los tests (`CHECK(...)`) y los
+  mensajes de log de la consola describen **piezas, comportamiento, contratos y
+  causas técnicas, nada más**. No llevan identificadores de tareas o de bugs,
+  planes, fases, hitos, fechas, estados ("pendiente", "por hacer") ni alusiones
+  a documentos o secciones ajenas al texto (p. ej. "ver §22 del plan",
+  "parte de H-19"). Ese contexto pertenece a los documentos de gestión — plan,
+  issues, historial de cambios y mensajes de commit/PR —, donde sí debe quedar;
+  dentro de los textos del código envejece, porque más adelante nadie sabe qué
+  era esa tarea y solo distrae de la lectura. Si una decisión o un texto solo
+  se entiende con ese contexto, se explica por sí mismo a partir de lo que hace
+  el código.
 - **Documentación**: los cambios de API visibles para usuarios se reflejan en
   `MANUAL_DE_USO.md` (especialmente la sección 13, scripting). Cambios de
   arquitectura en `PROJECT_STRUCTURE.md`.
 - **Bugs técnicos por limitaciones de herramientas**: documentar en
   `DocuTecnicoBugs.md` (patrón, síntomas, fix canónico, checklist de mitigación).
+- **Enums y switch-case**: evaluar de forma recurrente el uso de enumeraciones
+  (`enum class`) y `switch-case` para comparaciones y condicionales en lugar
+  de cadenas de `if-else` sobre valores enteros, strings o magic numbers.
+  Los `enum class` con `switch` exhaustivo (con `default` que lance o loguee)
+  permiten al compilador avisar de casos no cubiertos al agregar valores,
+  evitan errores de typo en strings, y el código resultante es más legible
+  y mantenible. Aplicar al agregar nuevos tipos de componentes, eventos,
+  estados de máquinas, tags, o cualquier conjunto cerrado de valores.
 
 ## Reglas de arquitectura
 
@@ -56,14 +209,160 @@ cd FunshiEngineGL/build && ctest --output-on-failure
   mantener compatibilidad de prefijos y acotar lecturas con `std::min`.
 - **Física** detrás de la fachada `PhysicsEngine` → `IPhysicsBackend`; no usar
   Bullet fuera de `Fisicas/`.
-- **Compatibilidad multiplataforma**: al usar APIs nativas del sistema operativo
-  (Windows API, POSIX, filesystem, threading, dynamic loading, etc.), SIEMPRE
-  verificar y mantener compatibilidad con **Linux y Windows**. Usar guardas
-  `#ifdef _WIN32` / `#else` (Linux/macOS) y aislar el código dependiente de
-  plataforma en capas de abstracción o backends dedicados (p. ej.
-  `IRenderBackend`, `FileSystemWatcher`, `BackendCpp`/`BackendJava`). No asumir
+- **Compatibilidad multiplataforma**: el motor es compatible con **Linux y Windows**,
+  sin excepción. Al usar APIs nativas del sistema operativo (Windows API, POSIX,
+  filesystem, threading, dynamic loading, etc.), SIEMPRE verificar y mantener las
+  dos plataformas. Usar guardas `#ifdef _WIN32` / `#else` (Linux/macOS) y aislar el
+  código dependiente de plataforma en capas de abstracción o backends dedicados
+  (p. ej. `IRenderBackend`, `FileSystemWatcher`, `BackendCpp`/`BackendJava`). No asumir
   que headers o comportamientos de un SO existen en el otro; probar o validar
   compilación cruzada en CI antes de confirmar cambios.
+  - **Énfasis en filesystem y servicios del SO**: es donde más divergen. Al trabajar
+    con rutas, archivos o servicios propios del sistema (separadores `/` frente a `\`,
+    mayúsculas y minúsculas, CRLF frente a LF, `mtime` y latencias del FS, permisos
+    y ACL, symlinks, variables de entorno, procesos hijo, carga dinámica, watchers
+    de archivos, toolchains), diseñar para las dos plataformas desde el primer
+    boceto: `std::filesystem` con el separador nativo, ramas `#ifdef _WIN32` con
+    fallback POSIX documentado, y decisiones probadas por escritura real (no por
+    existencia del directorio). Los patrones conocidos viven en `DocuTecnicoBugs.md`.
+  - **Tests de compatibilidad multisistema**: cada funcionalidad que toque filesystem
+    o servicios del SO lleva su prueba headless que la ejercite en Windows y en Linux
+    (ramas `#ifdef _WIN32` / `#else` en el propio test cuando el contrato difiera por
+    plataforma, o comparación contra `(fs::path(base) / ...).string()` en vez de
+    literales con `/`). Si el test resulta demasiado artificial (simular el SO sin
+    ejercer el contrato real), se deja constancia de por qué no se implementa y se
+    cubre con sonda local o CI en la plataforma real; la decisión queda a evaluar
+    según la funcionalidad.
+
+## Arquitectura de render: la API gráfica es intercambiable
+
+El core **no implementa ninguna API gráfica**. Define el *contrato* que cualquier
+backend tiene que respetar y deja la implementación en blanco: el backend por
+defecto es `BackendNulo`, que cumple el contrato entero sin dibujar nada. Un
+backend real se instala con `Rendering::Backend::instalarBackend()` antes de
+arrancar el bucle.
+
+**Este repositorio es donde vive la implementación de Vulkan** de ese contrato.
+El motor y el contrato vienen del core (`FunshiEngineCore`); lo que se
+implementa acá es el backend.
+
+| Pieza | Archivo | Qué aporta |
+|---|---|---|
+| Contrato de render | `src/Rendering/ContratoRender.h` | Tipos de programa (`ShaderKind`), nombres y tipos de los uniformes por tipo de programa, layout de vértices, máximo de luces, estructuras de vértice. |
+| Contrato del backend | `src/Rendering/Backend/IRenderBackend.h` | La interfaz que implementa el backend: recursos (malla, batch de líneas, texturas 2D, cubemap, render target, programa), estado (viewport, profundidad, blend) y draws. |
+| Backend nulo | `src/Rendering/Backend/BackendNulo.{h,cpp}` | La implementación en blanco: `init()` correcto, `available()` falso, recursos inválidos. |
+| Backend activo | `src/Rendering/Backend/BackendActivo.cpp` | La instancia activa: `activeBackend()` y `instalarBackend()`. |
+| Fachada de la interfaz | `src/ImGui/BackendImGui.h` + `BackendImGui.cpp` | `MotorImGui::{init,shutdown,newFrame,render,hayRenderer,nombreRenderer}`; en este repositorio la implementación dibuja con el backend de ImGui de Vulkan (en el core es nula). |
+| Backend de Vulkan | `src/Rendering/BackendVulkan/` | La implementación real del contrato sobre Vulkan: loader, instancia, dispositivo, swapchain, pipelines, recursos y pasadas. |
+
+Reglas que se sostienen en este repositorio:
+
+- **El motor no habla el dialecto de ninguna API.** El texto del shader (GLSL,
+  SPIR-V o el que corresponda) vive en el backend: el motor pide un programa por
+  tipo (`createProgram(ShaderKind)`) y el backend lo construye con su dialecto.
+- **Los uniformes se escriben con las constantes del contrato**, nunca con
+  literales: `Rendering::Contrato::Uniforme::kModel`, `kTint`, etc. El backend
+  resuelve por nombre y ese nombre tiene una sola fuente de verdad. Los arrays
+  de luces se escriben con el nombre del array y el índice entre corchetes
+  (`"uLightTypes[0]"`), que es la forma que el backend tiene que reconocer.
+- **Cada tipo de programa declara la semántica de sus uniformes** en
+  `Contrato::Detalle`. Un renderer no puede usar un uniforme que su tipo de
+  programa no expone.
+- **`uniformLocation` es un token opaco** del backend, no una *location* de una
+  API concreta: puede ser un offset de bloque, un índice de descriptor o una
+  location. El motor solo lo reenvía a los `setUniform*`; `-1` significa que el
+  programa no expone ese uniforme.
+- **La ventana no pide contexto gráfico**: se crea con `GLFW_NO_API` y la
+  superficie la crea el backend, que es quien sabe hacerlo. Por eso el backend
+  se inicializa con la ventana (`init(void* ventanaNativa)`), y ese arranque lo
+  hace `Ventana::initVentana()`.
+- **El límite de frame es del contrato**: `beginFrame()` y `endFrame()` abren y
+  cierran cada frame. El motor no llama a `glfwSwapBuffers`: el intercambio de
+  buffers es un detalle de la API gráfica, no del motor.
+- **`init()` es el arranque, `available()` es la consulta**: los renderers
+  preguntan `available()` antes de dibujar (no `init()`, que es de una sola vez
+  y necesita la ventana).
+- **El estado que la API exige para dibujar lo prepara el backend**, nunca el
+  llamador (patrón documentado en `DocuTecnicoBugs.md`).
+- El test `contrato-render-tests` (`tests/ContratoRenderTests.cpp`) verifica el
+  contrato, el backend nulo y un backend de mentira, y además hace un *source
+  lint* de los renderers: falla si alguno escribe un uniforme con un literal o
+  si usa un uniforme que su tipo de programa no expone.
+
+Reglas propias de la implementación de Vulkan:
+
+- **El contrato no se modifica desde acá.** Si Vulkan necesita algo que el
+  contrato no expresa (un límite de frame, la ventana nativa), el cambio se
+  hace en el core (`FunshiEngineCore`) y se trae con un merge. La razón: el
+  contrato es lo que comparten todos los backends; cambiarlo acá dejaria al
+  core fuera de sync con su propia interfaz.
+- **El backend no toca el motor.** Todo lo que el motor necesita se resuelve
+  por el contrato (`IRenderBackend`) o por la fachada de la interfaz
+  (`MotorImGui`). Un `if (vulkan)` en el motor es un error de diseño.
+- **La librería de Vulkan se enlaza** (`find_package(Vulkan)`): las funciones de
+  nivel de instancia se llaman directo y las de nivel de dispositivo se
+  resuelven con `vkGetDeviceProcAddr`. El costo es que el proceso necesita la
+  librería instalada para arrancar.
+- **El SPIR-V se compila en build time y va embebido en el ejecutable**: el
+  runtime no depende de un compilador de shaders ni de leer archivos. Los
+  fuentes GLSL viven en `src/Rendering/BackendVulkan/Shaders/` y CMake los
+  compila con `glslc` o `glslangValidator`.
+- **La interfaz se dibuja en una pasada propia** sobre la imagen del swapchain
+  (después de la escena, sin profundidad): el pipeline de ImGui no lleva
+  estado de profundidad y no es compatible con la pasada de la escena.
+- **Los tests que necesitan GPU se marcan como *skipped* (77)** cuando la
+  máquina no tiene Vulkan, para que la suite siga siendo verde en un runner sin
+  GPU.
+
+## Plan de trabajo en curso
+
+El plan vive en `.agentes/` (ignorado por git) y se actualiza en cada paso.
+
+| Plan | Repositorio | Objetivo | Estado |
+|---|---|---|---|
+| `PLAN CORE SIN API GRAFICA.md` | `FunshiEngineCore` | Dejar el core sin API gráfica implementada: contrato de render, backend nulo, ventana sin contexto y fachadas de interfaz. | Cerrado |
+| `PLAN IMPLEMENTACION VULKAN.md` | este | Implementar el backend Vulkan sobre el contrato e integrarlo con los renderers y la interfaz. | En curso |
+
+## Memoria de trabajo: documentos locales ignorados por git
+
+Todo el estado local que un agente necesita para retomar el trabajo sin
+re-investigarlo desde cero vive bajo **una única carpeta ignorada por git**,
+`.agentes/`, en la raíz del repo. No es documentación del proyecto ni se
+versiona; es la memoria de trabajo del agente.
+
+| Ruta | Para qué sirve |
+|---|---|
+| `.agentes/MEMORIA.md` | Memoria de contexto entre sesiones: estado del trabajo en curso, sistemas del código ya analizados (con punteros a archivos y líneas), supuestos abiertos, hallazgos pendientes, comandos de build/test que funcionan en el entorno y archivos que no se deben tocar. |
+| `.agentes/ARQUITECTURA.md` | Mapa de la estructura local de `.agentes/` y propósito de cada carpeta de trabajo. |
+| `.agentes/PLAN GENERAL DE FIX.md` | Lote de correcciones: cada hallazgo con su cadena `síntoma → evidencia → causa → fix → test`, la tabla de avance con los commits que cierran cada ítem y lo que queda por validar. |
+| `.agentes/auditorias/` | Informes de auditoría por área, uno por archivo: qué se revisó, qué se encontró, con evidencia `archivo:línea`, y si es regresión de un commit reciente o deuda preexistente. |
+| `.agentes/pendiente-revision/PENDIENTE_DE_REVISAR.md` | Lista local de verificaciones manuales todavía pendientes; no forma parte de la documentación versionada del proyecto. |
+
+Reglas:
+
+- **Crear lo que haga falta, manteniendo la raíz ordenada**: `.agentes/` es
+  extensible. Un informe nuevo de una revisión puntual es un archivo nuevo en
+  `.agentes/auditorias/`; un tema que ya no tiene archivo propio (por ejemplo
+  un informe de depuración grande) se agrupa en un `.md` con nombre claro en
+  `.agentes/`. No crear archivos sueltos en la raíz del repo: la raíz es del
+  proyecto, `.agentes/` es del agente.
+- **Si falta un archivo, recrearlo**: reconstruir su contenido desde el estado
+  real (git log, código fuente, esta guía) y tratarlo desde ese momento como
+  la fuente de contexto de la tarea — no empezar de cero sin comprobar antes
+  qué ya sabía el documento.
+- **Leerlos al arrancar** una tarea que toque temas que cubren, y **escribir
+  en ellos** lo nuevo relevante (decisiones, evidencia, estado verificado) de
+  forma incremental durante el trabajo: así la siguiente sesión no repaga el
+  análisis y no arrastra contexto que ya no sirve.
+- **Actualizarlos al cerrar cada paso** (mismo criterio que la lista de
+  tareas): lo que quedó hecho, verificado y con qué commit queda registrado
+  ahí.
+- Lo que se vuelva regla estable del proyecto **se promueve** a los `.md` del
+  repo (`MANUAL_DE_USO.md`, `PROJECT_STRUCTURE.md`, esta guía) en el commit
+  que lo justifica; mientras tanto vive solo en `.agentes/`.
+- Al commitear, **nunca** incluir esta carpeta: está ignorada a propósito y un
+  `git add <ruta>` explícito de los archivos propios de la tarea es la única
+  forma correcta de agregar cambios.
 
 ## Flujo de trabajo
 
@@ -108,25 +407,110 @@ cd FunshiEngineGL/build && ctest --output-on-failure
   conflictos por commits ajenos, reportarlos y esperar instrucciones en lugar de
   resolverlos por cuenta propia.
 - **Documentación sincronizada**: la documentación no es un extra, es parte de
-  la tarea. Antes de empezar, revisar los `.md` que describen el área afectada
-  (`README.md`, `MANUAL_DE_USO.md`, `PROJECT_STRUCTURE.md`,
-  `FLUJO_DE_RAMAS.md`, `DocuTecnicoBugs.md` y los de diseño); durante el trabajo,
-  ir comparando en paralelo lo que la documentación afirma contra lo que el
-  código realmente hace y corregir todo lo que quedó desactualizado — APIs,
-  arquitectura, comandos y conteo de tests, atajos, limitaciones, ejemplos —,
-  además de reflejar lo nuevo que se introduce. Los ajustes de documentación
-  entran en el mismo commit que el código que los motiva: nunca "la
-  documentación al final", ni entregar avances sin sus documentos al día.
+  la tarea. Antes de empezar, revisar dos cosas: (1) los `.md` que describen el
+  área afectada — `README.md`, `MANUAL_DE_USO.md`, `PROJECT_STRUCTURE.md`,
+  `FLUJO_DE_RAMAS.md`, `DocuTecnicoBugs.md` y los de diseño —; (2) **el
+  directorio `.github/`, que también es documentación del proyecto** (aunque
+  viva fuera de la raíz y ya se lo cite en reglas puntuales, existen estas
+  fuentes):
+
+  - `.github/COMMIT_TEMPLATE.md`: tipos admitidos, ámbitos frecuentes y reglas
+    de redacción de los mensajes de commit.
+  - `.github/PULL_REQUEST_TEMPLATE.md`: estructura y casillas obligatorias de
+    la descripción de todo PR.
+  - `.github/workflows/*.yml` (`ci.yml`, `release.yml`, `windows-release.yml`):
+    qué plataformas, flags y targets de test compila y ejecuta la CI. Es la
+    fuente para saber qué debe seguir en verde: si el cambio agrega un `.cpp`,
+    un target de test o una dependencia, ahí hay que mantenerlo al día (los
+    targets se listan explícitamente, ver `ci.yml`).
+
+  Durante el trabajo, ir comparando en paralelo lo que la documentación afirma
+  contra lo que el código realmente hace y corregir todo lo que quedó
+  desactualizado — APIs, arquitectura, comandos y conteo de tests, atajos,
+  limitaciones, ejemplos —, además de reflejar lo nuevo que se introduce. Los
+  ajustes de documentación entran en el mismo commit que el código que los
+  motiva: nunca "la documentación al final", ni entregar avances sin sus
+  documentos al día.
+- **Exploraciones con subagentes: delegarlas cuando el análisis lo pida.**
+  Para recorrer el código hay disponibles subagentes exploradores, y conviene
+  lanzarlos cuando la tarea es mayor que un vistazo puntual. Habitualmente es
+  necesario en dos casos: (1) **análisis técnico de varias funcionalidades** —
+  varios módulos implicados, rastrear un flujo de punta a punta o comparar
+  vías alternativas de una misma operación (p. ej. todas las formas de
+  renombrar algo y qué actualiza cada una)—; (2) **comparación contra la
+  documentación** — contrastar lo que afirman `README.md`, `MANUAL_DE_USO.md`
+  u otros `.md` con lo que el código realmente hace, idealmente con los
+  recorridos separados por tema y lanzados en paralelo. Si la razón de
+  lanzarlos es otra, mencionar antes el porqué (p. ej. un recorrido largo de
+  `git log`, una búsqueda que cruza todo el árbol) y proseguir. Para tareas
+  acotadas y lineales se sigue con las herramientas directas. Lo que los
+  subagentes devuelven es **insumo** de la regla siguiente (fuentes 2 y 3),
+  no una conclusión: contrastarlo antes de declarar una causa.
+- **Análisis profundo de cada bug: contrastarlo contra TODAS las fuentes
+  disponibles antes de arreglarlo.** Un síntoma —aunque lo haya reportado el
+  usuario— no es un diagnóstico. Antes de tocar código hay que reconstruir la
+  cadena `síntoma → evidencia → causa → fix → test` contrastando el caso con
+  cada fuente que pueda contradecirlo:
+  1. **Evidencia primaria**: reproducirlo y aislar las variables (paso a paso
+     exacto, `logs/` junto al ejecutable, stdout/stderr, exit codes,
+     artefactos que quedan en disco). Lo que solo "se ve" sin evidencia
+     reproducible es hipótesis, no causa. El "cómo" consigue esa evidencia —
+     tests rojo/verde, experimento A/B determinista, sondas y laboratorios en
+     carpetas ignoradas por git, sanitizadores, gdb/valgrind — está en
+     "Depuración de bugs: instrumentación y validación".
+  2. **Documentación del repo**: `README.md`, `MANUAL_DE_USO.md`,
+     `PROJECT_STRUCTURE.md`, `DOCUMENTACION.md`, `DocuTecnicoBugs.md`,
+     `AGENTS.md`, los documentos de diseño y el plan/issue del lote. Si la doc
+     afirma que ese comportamiento es el correcto y el código no lo cumple, es
+     bug de código; si el código es el correcto y la doc quedó vieja, se
+     arregla la doc; si nadie lo documenta, es un hallazgo nuevo.
+  3. **Código fuente**: rastrear el flujo completo —llamadores, estados,
+     ciclo de vida, caminos alternativos—, no solo la línea del síntoma, y
+     verificar si el comportamiento es intencional (comentarios, diseño) o si
+     otra parte del código ya lo compensa.
+  4. **Historial**: `git log` / `git blame` para saber si es una regresión
+     reciente, un bug conocido que recae o un fix dejado a medias.
+  5. **Tests existentes**: qué cubren, qué asumen y por qué no lo detectaron
+     (¿falta el test, o el test fija el comportamiento erróneo?).
+  6. **Fuentes externas**: documentación oficial de la API o herramienta
+     involucrada (`std::filesystem`, `cmd.exe`, GLFW, ImGui, JNI…) e issues
+     conocidas, para no "arreglar" algo que en realidad es el contrato de la
+     herramienta.
+  7. **Alternativa antes que el fix**: si el problema se puede sortear con
+     otra técnica (cambiar el enfoque, renombrar, aplazar, otra API), evaluarla
+     y compararla contra arreglar la causa; si no se arregla aún, dejarlo
+     anotado con su justificación.
+  Cierre del análisis: (a) **no se declara causa raíz sin evidencia que la
+  aisle** y descarte al menos la hipótesis competidora principal — si dos
+  hipótesis explican el síntoma, buscar el caso que las diferencie, no
+  quedarse con la primera plausible—, y esa evidencia se consigue con las
+  técnicas de "Depuración de bugs: instrumentación y validación"
+  (experimento A/B con una sola variable, test rojo→verde, sanitizer cuando
+  toque memoria); (b) el análisis queda escrito donde viva
+  el lote (plan, issue), con síntoma, evidencia, causa, fix y test, en la
+  posición por dependencias; (c) si el contraste no alcanza para decidir qué
+  lado está mal, se reporta y se esperan instrucciones en vez de elegir una
+  causa por conveniencia. Nunca se declara un bug ni se arregla algo "al
+  vuelo" sin ese contraste.
 - **Commits atómicos por tarea**: cada tarea terminada cierra con su commit
   (o los que sean necesarios si la tarea es grande), con mensaje descriptivo
   y convencionales (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). El
   formato completo, con los tipos admitidos, los ámbitos frecuentes y las
   reglas de redacción, está en `.github/COMMIT_TEMPLATE.md`.
+- **Commits de funcionalidades grandes incompletas**: si se crea un commit
+  para guardar una funcionalidad grande que todavía no está terminada o
+  validada, el cuerpo del mensaje debe detallar explícitamente las
+  insuficiencias: qué partes faltan, qué validaciones se realizaron y cuáles
+  siguen pendientes, y qué limita su cierre. El asunto y el cuerpo no deben
+  presentar la funcionalidad como completa; actualizar el estado cuando se
+  integre o valide lo pendiente.
 - **Sin atribuciones ajenas al cambio**: los mensajes de commit (y cualquier
   metadato asociado) deben describir únicamente la implementación o los
   cambios realizados. No se permite adjudicar coautoría, autoría, firmas ni
   menciones a herramientas, asistentes o terceros que no correspondan al
   trabajo concreto sobre el código.
+- **Sin coautorías**: nunca agregar trailers `Co-authored-by` a los mensajes
+  de commit, independientemente de la persona o herramienta que se atribuya.
 - **Commits solo con archivos propios**: al commitear, agregar únicamente los
   archivos que modificó el agente en la tarea actual (`git add <archivos>`),
   NO usar `git add -A` ni `git add .` que incluyen cambios ajenos sin
@@ -149,7 +533,10 @@ cd FunshiEngineGL/build && ctest --output-on-failure
   3. Esperar confirmación antes de ejecutarlo.
   Esto evita pérdida accidental de trabajo del usuario o cambios ajenos sin
   commitear.
-- Validar antes de commitear: build completo + `ctest` en verde.
+- Validar antes de commitear: build completo + `ctest` en verde. Si el cambio
+  cierra un bug, además la comprobación que corresponda según "Depuración de
+  bugs: instrumentación y validación": test rojo→verde, sanitizer cuando toque
+  memoria, y la reproducción del caso en más de una circunstancia.
 - **Build con cambios ajenos**: si el build falla y hay archivos modificados
   por otros colaboradores (no tocados por el agente), reportar el fallo,
   indicar que hay cambios ajenos pendientes, y esperar instrucciones;
@@ -160,4 +547,7 @@ cd FunshiEngineGL/build && ctest --output-on-failure
   como "resuelto" o "fix real" hasta que el usuario lo pruebe y lo confirme
   explícitamente. Los tests automatizados (ctest) no cubren flujos visuales
   de UI (dock, layout, ventanas); el criterio de aceptación lo define el
-  usuario probando la aplicación real.
+  usuario probando la aplicación real. El fix llega a esa validación con su
+  evidencia técnica ya lista (test rojo→verde, sanitizer, experimento en más
+  de una circunstancia, ver "Depuración de bugs: instrumentación y
+  validación"), no solo con la impresión de haberlo visto funcionar una vez.

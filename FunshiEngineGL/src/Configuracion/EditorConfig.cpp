@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include "ConfigPersistence.h"
 #include "ProjectManager.h"
 #include "ProjectPaths.h"
+#include "../Herramientas/PathUtils.h"
 
 // ============================================================================
 // Configuracion del editor: fachada sobre la UNICA implementacion del esquema
@@ -105,8 +106,8 @@ std::string EditorConfig::directorioSonidos(const std::string& nombreProyecto) {
     return ProjectPaths::directorioSonidos(nombreProyecto);
 }
 
-std::string EditorConfig::directorioInterfaces(const std::string& nombreProyecto) {
-    return ProjectPaths::directorioInterfaces(nombreProyecto);
+std::string EditorConfig::directorioScripts(const std::string& nombreProyecto) {
+    return ProjectPaths::directorioScripts(nombreProyecto);
 }
 
 std::string EditorConfig::directorioExportaciones() {
@@ -134,6 +135,12 @@ std::string EditorConfig::rutaPorDefecto() {
     return rutaConfiguracionGeneral();
 }
 
+void EditorConfig::asegurarEstructuraBase() {
+    // Solo la base y las migraciones legacy; NO crea proyecto (eso es una
+    // decision del usuario). Toda la logica vive en ProjectManager.
+    ProjectManager::asegurarEstructuraBase();
+}
+
 bool EditorConfig::renombrarProyecto(const std::string& viejo,
                                      const std::string& nuevo) {
     return ProjectManager::renombrarProyecto(viejo, nuevo);
@@ -141,10 +148,6 @@ bool EditorConfig::renombrarProyecto(const std::string& viejo,
 
 bool EditorConfig::eliminarProyecto(const std::string& nombre) {
     return ProjectManager::eliminarProyecto(nombre);
-}
-
-bool EditorConfig::crearProyectoPorDefecto() {
-    return ProjectManager::crearProyectoPorDefecto();
 }
 
 std::string EditorConfig::directorioProyectoPorDefecto() {
@@ -165,17 +168,11 @@ std::string& raizAssets() {
     return raiz;
 }
 
-// Dada una ruta y un prefijo candidato, dice si ruta cae exactamente bajo
-// prefijo (igual o seguida de un separador), respetando NUNCA igualar un
-// prefijo que no cierre en un separador (p.ej. "srcA" no debe cubrir "srcAb").
-bool rutaBajo(const std::string& ruta, const std::string& prefijo) {
-    if (ruta.size() < prefijo.size() ||
-        ruta.compare(0, prefijo.size(), prefijo) != 0)
-        return false;
-    if (ruta.size() == prefijo.size()) return true;
-    const char sep = ruta[prefijo.size()];
-    return sep == '/' || sep == '\\';
-}
+// La regla de "esta ruta cae bajo este prefijo" vive en PathUtils (rutaBajo),
+// compartida por todos los que cotejan rutas: en Windows '/' y '\' equivalen
+// para el sistema de archivos y el motor mezcla los dos (ProjectPaths arma
+// con '/', el explorador trae '\' de std::filesystem). Cotejarlos en literal
+// hacia que mover/renombrar no reescribiera ninguna referencia.
 
 // Heuristica de ruta absoluta (legacy): empieza con separador (unix/windows)
 // o con letra de unidad ("C:"). Los almacenados relativos (nuevo formato)
@@ -199,6 +196,10 @@ void EditorConfig::limpiarRaizAssets() noexcept {
 
 bool EditorConfig::hayRaizAssets() noexcept {
     return !raizAssets().empty();
+}
+
+const std::string& EditorConfig::raizAssetsFijada() noexcept {
+    return raizAssets();
 }
 
 std::string EditorConfig::relativizarRuta(const std::string& rutaAbsoluta) {
@@ -262,6 +263,7 @@ void EditorConfig::cargarProyecto(const std::string& nombreProyecto,
     datos_.gizmoOperacion = p.gizmoOperacion;
     datos_.gizmoGlobal = p.gizmoGlobal;
     datos_.camaraActivaId = p.camaraActivaId;
+    datos_.dimension = p.dimension;
     // Se asigna entero (y no se fusiona) para que entrar a un proyecto sin
     // configuracion arranque en defaults en lugar de heredar los del anterior.
     datos_.estadoVentanas = p.estadoVentanas;
@@ -306,6 +308,7 @@ void EditorConfig::guardarProyecto(const std::string& nombreProyecto,
     p.gizmoOperacion = datos_.gizmoOperacion;
     p.gizmoGlobal = datos_.gizmoGlobal;
     p.camaraActivaId = datos_.camaraActivaId;
+    p.dimension = datos_.dimension;
     p.estadoVentanas = datos_.estadoVentanas;
 
     ConfigPersistence::guardarProyecto(p, nombreProyecto, ruta);

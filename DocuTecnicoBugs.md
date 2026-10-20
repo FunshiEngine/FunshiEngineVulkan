@@ -62,6 +62,7 @@ recorrer(destFolder); // Ahora SÍ re-lee porque cache inválido
 | 1 | `ContentFolderInterface::contentGUI()` | Eliminar archivo (grid) | `std::filesystem` / NTFS / MSYS2 | Invalidación manual `cacheCarpeta.clear()` + `cacheMtime = {}` | `feat(gui): eliminar archivos y carpetas desde el grid del explorador` |
 | 2 | `ContentFolderInterface::contentGUI()` | Eliminar carpeta (grid) | Idem | Idem + `contadorCambios++` para árbol | Idem |
 | 3 | `TreeFilesInterface::contentGUI()` | Eliminar carpeta (árbol) | Idem | Ya usaba patrón R7: `carpetaAEliminar` diferida + rescaneo vía `contadorCambios` | Preexistente |
+| 4 | `SoltarEnCarpeta.h` + `ContentFolderInterface` | **Drop entre paneles** (grid → árbol / grid → grid carpeta distinta) | `std::filesystem` / NTFS / MSYS2 | `contadorCambios++` siempre (archivo o carpeta) + invalidación explícita cache grid origen **y** destino (`cacheCarpeta.clear(); cacheMtime = {}`) | `fix(explorador): invalidar cache grid al mover entre paneles` |
 
 > **Nota**: `TreeFilesInterface` **no tenía este bug** porque su patrón R7 ya forzaba `contadorCambios++` → `refrescarArbol()` → reconstrucción completa del árbol (que no usa `mtime` de directorio). El bug apareció al replicar la lógica en `ContentFolderInterface` **sin portar la invalidación explícita del cache de grid**.
 
@@ -100,6 +101,15 @@ recorrer(destFolder); // Ahora SÍ re-lee porque cache inválido
 | **Invalidación Explícita Post-Mutación** | `cache.clear(); timestamp = {};` tras `remove/remove_all/write` | **Este documento** |
 | **Contador de Cambios (`contadorCambios`)** | Señal simple para forzar rescaneo de estructuras complejas (árboles) | `FileSelection`, `TreeFilesInterface` |
 | **R8 — Resolver la Ruta y Probar la Escritura** | No asumir que el destino es escribible: probar creando y borrando un archivo; si falla, usar la carpeta de datos del usuario y avisar | `ProjectPaths::directorioBase()` (ver §6.4) |
+| **R9 — Texto estructurado con seek en binario** | Si el lector hace `seekg(tellg())` para releer (look-ahead/peek), abrir en **binario** y normalizar las líneas (recortar `\r`): en modo texto el CRT de Windows traduce CRLF y los offsets dejan de ser bytes exactos | `SceneSerializer::load()` + `getlineLimpio()` (ver §7.4) |
+| **R10 — La bandera de encoding viaja junto al dato** | Si una API acepta un bloque/cadena cuyo encoding depende de una bandera (`CREATE_UNICODE_ENVIRONMENT`), la bandera se decide **dentro** de la función que recibe el dato, nunca en el llamador | `Proceso::lanzar()` (ver §8.4) |
+| **R11 — La frescura del artefacto manda, no el estado del que pide** | Antes de reescribir una salida, decidir por los tiempos de **archivo** (existe y no es más viejo que su fuente); una `.dll` cargada en el proceso no se puede reescribir en Windows | `BackendCpp::compilarYCargar()` (ver §9.4) |
+| **R12 — El que dibuja posee el estado de la pasada** | Toda pasada sin atributos igual necesita el estado que la API exige para dibujar (en un contexto core, un VAO ligado; en una API con pipelines, el pipeline): ese estado lo prepara y posee el backend, no el llamador | `IRenderBackend::drawFullscreenTriangle()` (ver §10.4) |
+| **R13 — Toda carpeta del motor en la raíz de datos es un nombre reservado** | Una migración de compatibilidad que mueve "lo que haya en la raíz" se lleva también las carpetas del motor; hay que declararlas reservadas al crear la carpeta, no después | `ProjectPaths::esReservado()` (ver §11.4) |
+| **R14 — Un valor horneado es una pista, no una verdad** | Lo que CMake hornea (rutas de compilador, de cabeceras, de toolchain) es de la máquina que compiló: comprobar que existe antes de usarlo, dejar un override por entorno que gane, buscar la herramienta en la máquina y degradar a un nombre que resuelva el PATH | `BackendCpp::compilador()`, `vcvars64EnRaices()` (ver §12.4) |
+| **R15 — El separador nativo manda al comparar rutas** | Quien arma una ruta con `std::filesystem` (o con `PATH_SEP`) produce el separador de su plataforma: en Windows, `base / "logs"` es `\logs`, no `/logs`. Un test que compare contra un literal con `/` solo pasa en Linux; comparar contra `(fs::path(base) / ...).string()` o rehacer el cálculo con la misma herramienta que el código bajo prueba | `tests/EditorConfigTests.cpp` (bloque `RutasLog::candidatas` y `relativizarRuta`) |
+| **R16 — La resolución del `mtime` depende del toolchain, no del FS** | NTFS registra el mtime con 100ns, pero la lectura de `std::filesystem::last_write_time` en el CRT de MinGW viene de `stat` (1 segundo) y su setter no aplica sobre directorios: una creación dentro del mismo segundo que la marca guardada no es observable ahi, mientras que con MSVC (FILETIME) si lo es. Quien compare mtimes para decidir (polling, invalidación de cache, hot reload) no debe depender de subsegundos, y un test que ejercite esa comparación debe hacer el cambio visible en ambas granularidades o constatar la limitación | `FileSystemWatcher` (fallback de polling), `tests/FileManagerTests.cpp` (bloque polling) |
+| **R17 — Tu binario también es el subproceso** | Un motor multiproceso (CEF) relanza el **mismo ejecutable** con `--type=...`: `CefExecuteProcess` debe correr al comienzo de `main`, antes de log/ventana/GL; devuelve -1 cuando el proceso no es subproceso y el motor sigue. Si no se corta ahí, el subproceso arranca la inicialización completa del motor en paralelo al proceso principal | `WebUIRuntime::ejecutarSubproceso` en `main.cpp` y `main_juego.cpp` (ver §13.4) |
 
 ---
 
@@ -145,17 +155,28 @@ donde el proceso **no puede escribir**.
 
 ### 6.3 Causa raíz
 
-Son tres hechos que por separado parecen inocuos y juntos cierran la puerta:
+Eran tres hechos que por separado parecían inocuos y juntos cerraban la puerta:
 
 | # | Hecho | Consecuencia |
 |---|-------|--------------|
-| 1 | `PrivilegesRequired=admin` en el `.iss` | El instalador corre como administrador. |
+| 1 | `PrivilegesRequired=admin` en el `.iss` | El instalador corre como administrador e instala en `Program Files`. |
 | 2 | El `.iss` crea `{app}\MotorGrafico` **sin directiva `Permissions:`** | La carpeta hereda los ACL de `Program Files`: `Users` tiene lectura y ejecución, **no** escritura. |
 | 3 | El `.exe` no lleva manifiesto `requestedExecutionLevel` | El motor corre como usuario normal, sin elevar, y por tanto sin esos permisos. |
 
 El agravante: **ningún llamador comprobaba el retorno de las escrituras**
 (`crearArchivo`, `guardarGeneral`, `saveScene`, … devolvían `bool` y se
 ignoraban). Por eso el fallo fue silencioso en vez de un error reportado.
+
+Hoy el instalador es **por usuario** (`PrivilegesRequired=lowest`, con lo que
+Inno Setup mapea `{autopf}` a `%LOCALAPPDATA%\Programs`), así que la carpeta
+del ejecutable está en el perfil y el problema ya no se reproduce en una
+instalación nueva. Los tres hechos siguen siendo posibles por otras vías (una
+copia del motor en `Program Files`, una carpeta de datos montada en solo
+lectura, un proceso elevada), así que el patrón de la sección siguiente se
+mantiene como red de seguridad y no como el camino normal. Además, como el motor
+resuelve la raíz probando la escritura de verdad, un cambio en el destino se
+detecta solo: si `{app}` deja de admitir escritura, los datos se van a la
+carpeta del usuario sin tocar nada.
 
 ### 6.4 Solución canónica (Patrón R8 — Resolver la ruta, probar la escritura)
 
@@ -194,6 +215,16 @@ Reglas complementarias:
 - **Comprobar los retornos de las escrituras** cuando la ruta destino no es
   fiable. La regla R7 sigue valiendo, pero no cubre el caso de "escribí y no
   pasó nada".
+- **Preferir que la ruta sea escribible antes de depender del plan B**: instalar
+  por usuario (`PrivilegesRequired=lowest`) hace que el destino sea del propio
+  usuario y elimina la UAC de paso. El patrón sigue siendo obligatorio porque
+  el destino puede cambiar sin que nadie lo decida (carpeta montada en solo
+  lectura, copia a otra ubicación, proceso que corre elevado).
+- **Poder probar la decisión sin el ejecutable**: la elección entre las dos
+  candidatas se aisló en `ProjectPathsDetalle::elegirRaizDeDatos`, sin caché y
+  con las rutas por parámetro, para que las pruebas la ejerciten con rutas
+  falsas. "No escribible" se simula con una ruta debajo de un archivo
+  regular: falla igual en Linux y en Windows y no depende de permisos.
 
 ### 6.5 Registro de instancias
 
@@ -202,6 +233,8 @@ Reglas complementarias:
 | 1 | `ProjectPaths::directorioBase()` | Guardar proyecto, escena, config e `imgui.ini` | Windows / `Program Files` / ACL del instalador | Patrón R8: prueba de escritura + caída a `%APPDATA%` / `$XDG_DATA_HOME`, decisión cacheada, migración sin sobrescribir | `fix(configuracion): resolver la raiz de datos cuando no se puede escribir` |
 | 2 | `SettingsScript.cpp` (lectura de `SerializeField`) | Editar un campo del inspector | `std::variant` (efecto, no causa) | Índice acotado al menor de los dos cardinales | Ídem |
 | 3 | `Script::cargarSiNecesario()` | Cargar los valores guardados de un script | `std::variant` (efecto, no causa) | `ReflejoScripts::alinearValores()` empareja por nombre al compilar | Ídem |
+| 4 | `redirigirSalidaALog()` en `main.cpp` | Escribir el log de arranque | Windows / `Program Files` / ACL del instalador | Patrón R8 aplicado al log: lista ordenada de candidatas (`RutasLog::candidatas()`) —raíz de datos, carpeta del ejecutable y temporal del sistema— y se usa la **primera que acepte escribir**; con la carpeta del ejecutable sola no había log y toda la salida se iba a la consola | `fix(ventana): escribir el log de arranque en una carpeta escribible` |
+| 5 | Instalador de Windows (`.iss`) | Instalar sin UAC | UAC / ACL de `Program Files` | `PrivilegesRequired=lowest`: instalación por usuario, con `{autopf}` mapeado a `%LOCALAPPDATA%\Programs`. Verificado con el ejecutable real en una carpeta de solo lectura: no escribe ahí y todo cae en la carpeta de datos del usuario. La elección de raíz se aisló en `ProjectPathsDetalle::elegirRaizDeDatos` para poder probarla | `fix(paquete): instalar por usuario sin pedir privilegios de administrador` |
 
 > **Nota**: las instancias #2 y #3 no son la causa del crash sino el punto donde
 > se manifiesta. La causa es la instancia #1: sin ella no habría divergencia
@@ -209,16 +242,722 @@ Reglas complementarias:
 > arreglaron las tres porque el acceso fuera de rango es un defecto real por sí
 > mismo: la escena guardada y la reflexión actual pueden discrepar siempre, no
 > solo cuando falla la escritura.
+>
+> La instancia #4 tiene además un remate que no es de permisos: al escribir el log
+> en la raíz de datos, la carpeta `logs/`$resultó ser una carpeta más de la raíz
+> y `migrarProyectosAntiguos()` la arrastró dentro de `Proyects/`. Se documenta
+> aparte en §11 (Patrón R13).
 
 ---
 
-## 7. Historial de Cambios
+## 7. Tercer concepto: **Offsets engañosos en streams de texto (`tellg`/`seekg` con CRLF)**
+
+Distinto de §1 (latencia de `mtime`) y de §6 (permisos de escritura): aquí la
+lectura **sí funciona**, byte a byte, hasta que el código retrocede en el
+archivo para releer una línea y el stream no vuelve al mismo sitio. La causa
+es que en modo texto el CRT de Windows traduce `CRLF`↔`LF`, y en esa
+traducción `tellg()` deja de devolver un offset físico consistente con el que
+`seekg()` después interpreta.
+
+### 7.1 Descripción del problema
+
+`SceneSerializer::load()` abría `SceneBBDDObjetos.txt` en **modo texto**.
+El `look-ahead` de `loadPreOrder` hace lo siguiente con cada línea:
+
+```cpp
+const std::streampos markerPosition = file.tellg();  // ¿posición exacta?
+std::getline(file, marker);
+if (marker no es "=>" ni "<=")
+    file.seekg(markerPosition);                      // volver a leerla como línea
+```
+
+En modo texto, ese `seekg(tellg())` **no es idempotente** en
+MinGW/libstdc++ sobre Windows: la releitura arranca en un offset erróneo.
+
+### 7.2 Síntomas
+
+- La línea del **siguiente hermano** en el bloque de hijos se relee
+  **truncada** por la izquierda (`"ObjectN2.db"` → `"ectN2.db"`,
+  `"basura"` → `"sura"`). Medido con sondas: la deriva va de **+2 a +6
+  bytes** y depende del búfer, no es constante ni acumulativa de forma
+  predecible.
+- **Solo con ≥2 hermanos en el mismo nivel**: con un hijo por nivel el
+  look-ahead siempre ve `"=>"` o `"<="` y nunca se ejecuta el `seekg`
+  (por eso los round-trip con jerarquía en escalera no lo reproducían).
+- Efecto en H-17 (bug de los objetos fantasma "Scene", ver
+  `PLAN GENERAL DE FIX.md` §20): con el código previo, la línea truncada no
+  contenía `"ObjectN"` → el id quedaba en su default `0` → `loadEntity`
+  leía `ObjectN0.db` (el binario de la **raíz**) → nacía un hijo
+  `Modelos3D` con el nombre "Scene" que, al guardarse con id propio, **se
+  auto-propagaba**. Ningún error en el log: el código ni siquiera avisaba.
+- El índice en disco **se ve limpio** (el guardado escribe secuencialmente,
+  sin `seekg`), así que inspeccionar el archivo no revela nada.
+
+### 7.3 Causa raíz
+
+La traducción `CRLF`↔`LF` del CRT en modo texto hace que la posición que
+devuelve `tellg()` y la que interpreta `seekg()` no midan lo mismo. La
+única garantía de round-trip exacto es el modo **binario**, donde los
+offsets son bytes literales. (Los demás `tellg`/`seekg` del motor —
+`Script`, `Model`, `Material`, `Transform`, `Modelos3D` — leen vía
+`Binario`, que ya abre con `std::ios::binary`: el problema era exclusivo
+del índice de escena.)
+
+### 7.4 Solución canónica (Patrón R9 — texto estructurado con seek en binario)
+
+**Si el lector retrocede (`seekg(tellg())`, peek, relectura), abrir en
+binario y normalizar las líneas al leerlas:**
+
+```cpp
+// load(): apertura en binario — offsets de bytes exactos.
+std::ifstream file(pathTxt, std::ios::binary);
+
+// helper: getline + recorte del '\r' que en binario ya no traduce nadie.
+bool getlineLimpio(std::ifstream& file, std::string& line) {
+    if (!std::getline(file, line)) return false;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return true;
+}
+```
+
+Reglas complementarias:
+
+- El `trim` de `\r` tiene que estar en **todas** las lecturas de ese
+  archivo (bucle principal, look-ahead, saltos de bloque): una sola
+  lectura sin normalizar rompe `line == "<="`.
+- **Testear con ≥2 hermanos consecutivos**: es el único caso que ejercita
+  el `seekg` de releertura; un round-trip en escalera (1 hijo por nivel)
+  no lo toca.
+- Validar además el patrón de cada línea (`ObjectN<entero>.db`) y saltarla
+  con aviso si no cumple: es la red de seguridad para índices que **ya**
+  quedaron corruptos con el formato viejo.
+
+### 7.5 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `SceneSerializer::load()` / `loadPreOrder` (look-ahead línea ≈518/563) | Cargar la escena del proyecto | MinGW/libstdc++ sobre Windows, CRT en modo texto con CRLF | R9: apertura en binario + `getlineLimpio()`; validación estricta de líneas con aviso | `fix(escena): impedir los objetos fantasma Scene y leer el indice en binario` |
+
+---
+
+## 8. Cuarto concepto: **Bloques de entorno UTF-16 rechazados por falta de `CREATE_UNICODE_ENVIRONMENT`**
+
+Distinto de §1 (cache viejo), §6 (permisos de escritura) y §7 (offsets de
+texto): aquí la llamada **falla en el momento**, con un código de error
+genérico, y lo engañoso es que *todo* bloque parece inválido — hasta el que
+el propio sistema te dio. La duda se va hacia el contenido del bloque
+("mi parser corrompe el UTF-16") cuando el problema está en una bandera
+que no se pasó.
+
+### 8.1 Descripción del problema
+
+`CreateProcessW(..., lpEnvironment, ...)` interpreta `lpEnvironment` como
+**ANSI a menos que se pase `CREATE_UNICODE_ENVIRONMENT` (0x400)** en
+`dwCreationFlags`. El contrato está documentado en MSDN, pero es invisible
+en la firma de la función: no hay parámetro de encoding, solo la bandera.
+Sin ella, un bloque UTF-16 perfectamente formado se lee byte a byte:
+
+```text
+bloque UTF-16:   'P' 00 'A' 00 'T' 00 'H' 00 ...
+leído como ANSI: "P"      ← termina en el primer NUL
+```
+
+queda una "clave" sin `=` (o directamente una cadena vacía) y el sistema
+responde `ERROR_INVALID_PARAMETER` (87).
+
+### 8.2 Síntomas
+
+- `CreateProcessW` devuelve **87** con **cualquier** bloque que contenga
+  variables, incluida una **copia literal** del bloque del propio proceso
+  padre y el bloque **oficial** de `CreateEnvironmentBlock` (userenv): el
+  contenido no importa, así que "revisar el parser" es un callejón sin
+  salida.
+- Un bloque **vacío** (dos NULs) **sí** funciona — se parece a un fallo
+  intermitente o dependiente de alguna variable concreta.
+- El mismo bloque pasado por `CreateProcessA` (ANSI es su default) **sí**
+  funciona, y .NET (`ProcessStartInfo.Environment`, que sí agrega la
+  bandera) también: solo cae la combinación *W + UTF-16 + sin bandera*.
+- Como `lpEnvironment=NULL` (heredar el entorno) nunca falla, el bug
+  permanece latente hasta que aparece un único código que pasa bloque
+  (entorno extra, harvest de vcvars).
+
+### 8.3 Causa raíz
+
+La bandera falta en la llamada. Diagnóstico por reducción (sonda
+`FunshiEngineGL/sondas/sonda_bloque.cpp`): bloque vacío ✓ / `A` con
+bloque ✓ / sin bloque ✓ / `.NET` ✓ / copia literal ✗ / userenv ✗ /
+cualquier mapa ✗ → el único diferenciador era `dwCreationFlags=0`.
+
+### 8.4 Solución canónica (Patrón R10 — la bandera de encoding viaja junto al dato)
+
+```cpp
+const DWORD flags = bloque ? CREATE_UNICODE_ENVIRONMENT : 0;
+CreateProcessW(nullptr, linea, nullptr, nullptr, heredar, flags,
+               bloque, cwd, &si, &pi);
+```
+
+Reglas complementarias:
+
+- La bandera se decide **dentro** de la función que recibe el bloque: una
+  API que acepta bloques no puede delegar al llamador el encoding — si el
+  llamador puede equivocarse, ese error no tiene test posible en la capa
+  que llama.
+- `CreateProcessA` con bloque ANSI no necesita bandera; al portar de `A` a
+  `W` hay que acordarse de agregarla (el compilador no avisa).
+- **Testear con un hijo que reciba y reporte la variable** (no solo
+  `rc==0`): un bloque aceptado pero ignorado daría `rc=0` con el entorno
+  heredado y pasaría inadvertido.
+
+### 8.5 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `Proceso::lanzar()` (`src/FileManager/Proceso.cpp`) | Spawn con entorno propio (variable extra y bloque de vcvars) | Win32 `CreateProcessW` | R10: `CREATE_UNICODE_ENVIRONMENT` condicional a que haya bloque | `fix(scripts): invocar el compilador y los sondajes sin cmd.exe` |
+
+---
+
+## 9. Quinto concepto: **Una imagen cargada bloquea su archivo (Windows)**
+
+Distinto de §1 (cache con `mtime` viejo), §6 (permisos de la carpeta) y §8
+(encoding del entorno): acá el archivo es escribible, el proceso tiene permiso
+y la operación sale bien las demás veces. Lo que cambia es que **otra parte
+del proceso ya tiene la imagen cargada** y el sistema mantiene el fichero
+mientras viva esa carga. El error —permiso denegado— apunta justo a lo que no
+falta, y ahí se pierde una tarde probando permisos, antivirus y borrado de
+temporales.
+
+### 9.1 Descripción del problema
+
+`dlopen`/`LoadLibrary` mapea la `.dll` en el proceso y el sistema deja el
+archivo con bloqueo de escritura mientras la imagen siga cargada (en POSIX no
+hay bloqueo: reescribir un fichero mapeado está permitido). Si el proceso
+vuelve a invocar al enlazador con **la misma ruta de salida** —recompilar el
+mismo artefacto—, `ld` no puede abrir su archivo de salida y aborta:
+
+```text
+ld.exe: cannot open output file C:\...\script_<hash>.dll: Permission denied
+collect2.exe: error: ld returned 1 exit status
+```
+
+La clave del artefacto se calcula por ruta de fuente + compilador + flags, así
+que todos los componentes que apuntan al mismo fuente comparten la misma
+salida: recompilar para el segundo componente es, inevitablemente, intentar
+reescribir lo que el primero ya cargó. `FreeLibrary`/`dlclose` es lo único que
+libera el archivo.
+
+### 9.2 Síntomas
+
+- El fallo **no es de compilación sino de enlace**, y aparece donde `ld` abre
+  su salida: el código traducido del fuente está bien.
+- Ocurre solo cuando **dos componentes comparten el mismo fuente** y el
+  primero ya cargó el artefacto; con un único componente por fuente no se
+  reproduce.
+- El mismo archivo, con los mismos permisos, se escribe sin problemas
+  segundos antes y segundos después (fuera de la ventana en que la imagen
+  está cargada): parece un problema de permisos o de antivirus y no lo es.
+- En POSIX no se manifiesta, lo que sugiere un problema del sistema de
+  archivos cuando es del sistema operativo.
+
+### 9.3 Causa raíz
+
+1. La recompilación se decidía por el `mtime` **guardado en el componente**
+   (`salida.mtimeFuente`), vacío en un componente recién cargado de la
+   escena: recompila siempre, aunque el artefacto se haya escrito hace
+   milisegundos.
+2. La cola de compilación encola **por componente**, sin agrupar por fuente,
+   así que los dos llegan en la misma pasada y en serie.
+3. El primero enlaza, hace `dlopen` y deja el archivo bloqueado; el segundo
+   vuelve a enlazar sobre esa misma ruta: denegado.
+
+### 9.4 Solución canónica (Patrón R11 — decidir por la frescura del artefacto, no por el estado de quien pide compilar)
+
+- La recompilación se condiciona a que **falte el artefacto o sea más viejo
+  que su fuente** (`last_write_time(artefacto) < last_write_time(fuente)`).
+  Es una propiedad del **archivo**, no del componente que pide la carga: un
+  artefacto al día se usa tal cual y el segundo componente solo lo vuelve a
+  abrir (la biblioteca se referencia, no se duplica), sin pasar por el
+  enlazador.
+- La clave del artefacto sigue llevando el contrato de compilación
+  (compilador + flags): cambiar los flags cambia la clave, la salida "nueva"
+  no existe y se recompila sola, sin borrar temporales a mano.
+- Cuando sí hay que recompilar (el fuente se editó), quien lo tiene cargado
+  descarga **antes** de volver a compilar (`Script::recargar` →
+  `ScriptRuntime::descargar` → `FreeLibrary`): así el archivo queda libre
+  para el enlazador.
+
+Checklist de mitigación:
+
+- [ ] No invocar al enlazador sobre un artefacto que **este proceso** tenga
+      cargado: comprobarlo por frescura de archivo antes de compilar.
+- [ ] Si hay que reescribirlo, descargar **primero** todas las instancias que
+      lo carguen y solo después compilar y volver a cargar.
+- [ ] Mirar los dos frentes: quién pide la compilación y quién tiene el
+      archivo abierto en este proceso.
+- [ ] Test: dos componentes sobre el mismo fuente, el segundo con la
+      estructura de carga vacía, y comprobar que carga **sin** reescribir el
+      artefacto.
+
+### 9.5 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `BackendCpp::compilarYCargar()` (`src/Behaviour/Backends/BackendCpp.cpp`) | Compilar el script al entrar en Play con dos objetos sobre el mismo `.cpp` | MinGW `ld` sobre Windows (`LoadLibrary`) | R11: `artefactoVigente()` (existe y no es más viejo que el fuente) decide la recompilación; mismo criterio en `BackendJava` sobre la `.class` | `fix(scripts): no recompilar un artefacto que ya esta al dia` |
+
+---
+
+## 10. Sexto concepto: **Una pasada sin atributos necesita su propio estado de dibujo**
+
+### 10.1 Descripción del problema
+
+En un perfil **core** de OpenGL el *Vertex Array Object* 0 no es un objeto
+usable: la API lo eliminó para forzar el pipeline moderno. Cualquier llamada de
+dibujo (`glDrawArrays`, `glDrawElements`, instanciada o no) con **ningún VAO
+ligado** se rechaza con `GL_INVALID_OPERATION` y **no dibuja nada**. Como el
+error no interrumpe ni imprime nada por defecto (Mesa no loguea `glGetError`),
+el síntoma se ve como "la pasada no hace nada" y no como un error de compilación
+o de shader.
+
+El caso típico que cae en esto es la pasada **sin atributos**: un shader que
+arma sus vértices con `gl_VertexID` (triángulo a pantalla completa, post-proceso,
+estencil) y por eso no lleva VBO. Es fácil creer que "no hay geometría, entonces
+no hace falta VAO": con ese razonamiento la pasada funciona en un contexto de
+compatibilidad y no en el core que pide el motor.
+
+El motivo es general y no exclusivo de OpenGL: **la pasada sin atributos igual
+necesita el estado que la API exige para dibujar**. En un contexto core es el
+VAO; en una API que exige un *pipeline* ligado es el pipeline; en una que exige
+un *command buffer* es el command buffer. La regla que se aplique es la misma:
+quien ejecuta el dibujo posee ese estado, y el llamador no lo tiene que
+preparar.
+
+### 10.2 Síntomas
+
+- Una pasada completa (fondo, cielo, post-proceso) **no aparece nunca**, mientras
+  el resto de la escena se dibuja bien.
+- El área afectada muestra el **color de limpieza** del framebuffer (o lo que
+  haya quedado de una pasada anterior), no negro ni basura.
+- Sin mensajes: ni error de compilación de shader, ni excepción, ni línea de log.
+  El shader linkea, los uniforms se encuentran y se suben con éxito.
+- Los valores que la pasada debería usar llegan correctamente (se pueden trazar
+  por log hasta el `setUniform`): el problema no está en los datos.
+- Reproducible en drivers que imponen core estricto (Mesa con
+  `GLFW_OPENGL_CORE_PROFILE`, macOS, GPU modernas); en un contexto de
+  compatibilidad el mismo código puede funcionar y esconder el bug.
+
+### 10.3 Causa raíz
+
+```cpp
+// Pasada sin atributos (fallaba): el shader usa gl_VertexID, asi que "no
+// necesita VAO"... en un contexto de compatibilidad.
+backend.useProgram(skyProgram_);
+backend.setUniformVec3(locTop, colorSup);
+glDrawArrays(GL_TRIANGLES, 0, 3);   // <-- sin VAO ligado: GL_INVALID_OPERATION
+```
+
+El motor desliga el VAO al terminar cada dibujo (`glBindVertexArray(0)`) y el
+backend de ImGui restaura el VAO previo al cerrar su frame, que es 0. Por eso el
+estado al entrar a la pasada era "ningún VAO": en core, dibujo descartado.
+
+Comprobación directa (`glGetError` después del draw): `0x0502`
+= `GL_INVALID_OPERATION` y los píxeles quedan en el color de clear; ligando un
+VAO vacío el mismo draw devuelve `GL_NO_ERROR` y pinta el degradado esperado.
+
+### 10.4 Solución canónica (Patrón R12 — el que dibuja posee su estado)
+
+**Toda pasada sin atributos necesita su propio estado de dibujo, aunque esté
+vacío**, y ese estado lo debe poseer quien ejecuta el dibujo, no el llamador:
+
+```cpp
+// El backend prepara el estado y dibuja; la capa de escena solo pide el
+// dibujo a pantalla completa con el programa ya en uso.
+void BackendVulkan::drawFullscreenTriangle() {
+    // Pipeline del triangulo a pantalla completa ya ligado, command buffer
+    // abierto: el backend aporta el estado que la API exige.
+    vkCmdDraw(commandBuffer_, 3, 1, 0, 0);
+}
+```
+
+Puntos clave:
+
+- El estado vacío (el VAO de OpenGL, el pipeline de Vulkan) se crea **una sola
+  vez** y se reusa; no hay que subir geometría ni atributos.
+- El dibujo va por el **backend** (`IRenderBackend`), no por una llamada de
+  dibujo suelta en la capa de escena: así el estado gráfico queda en la única
+  capa que lo posee y cualquier pasada futura reusa el mismo camino. El
+  contrato expone exactamente eso: `drawFullscreenTriangle()` dibuja con el
+  programa ya en uso y sin geometría.
+- Fuera del backend, la regla general es: **el estado que la API exige para
+  dibujar lo prepara el backend, nunca el llamador** (los meshes y los batches
+  de líneas ya lo hacían).
+
+Checklist de mitigación:
+
+- [ ] Revisar todo `glDrawArrays`/`glDrawElements` del motor y confirmar que
+      tiene un VAO ligado (propio, del backend o del objeto que dibuja).
+- [ ] En una pasada nueva sin atributos, usar la pasada a pantalla completa del
+      backend en vez de llamar a `glDrawArrays` directo.
+- [ ] Al depurar "una pasada no pinta nada": `glGetError` inmediatamente después
+      del draw (`0x0502` = VAO ausente) y leer píxeles del framebuffer para
+      distinguir "no dibuja" de "dibuja con otro color".
+- [ ] No confiar en "no hay geometría, no hace falta VAO": en core el VAO es
+      obligatorio siempre.
+- [ ] Test: sonda que corre la misma pasada con y sin VAO ligado y compara
+      píxeles (la sonda vive fuera del repo; el fix se cierra con la validación
+      en la app).
+
+### 10.5 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `SceneRenderer::dibujarCielo()` (`src/Rendering/SceneRenderer.cpp`) | Cielo degradado (triángulo a pantalla completa con `gl_VertexID`) sin VAO ligado en contexto core | OpenGL core (`GLFW_OPENGL_CORE_PROFILE`, Mesa 4.6) | R12: `IRenderBackend::drawFullscreenTriangle()` posee el estado de la pasada y lo liga por dentro | `fix(rendering): ligar VAO en el pase a pantalla completa del cielo` |
+
+---
+
+
+## 11. Séptimo concepto: **Una migración de compatibilidad se lleva las carpetas del motor**
+
+Distinto de §6: aquí la escritura **sí funciona**. El daño lo produce, unos
+segundos más tarde, código del propio motor que reorganiza la carpeta de datos.
+
+### 11.1 Descripción del problema
+
+La raíz de datos (`MotorGrafico/`) comparte sitio con dos cosas a la vez: los
+proyectos del usuario y las carpetas del motor (`Proyects`, `Configuraciones`,
+`Exportaciones`, `logs`). Para migrar los proyectos de una estructura antigua,
+`migrarProyectosAntiguos()` recorre **todo** lo que hay en la raíz y mueve a
+`Proyects/` cada carpeta cuyo nombre sea válido como proyecto:
+
+```cpp
+for (const auto& entry : std::filesystem::directory_iterator(base, ec)) {
+    if (!entry.is_directory(ec)) continue;
+    const std::string nombre = entry.path().filename().string();
+    if (ProjectPaths::esNombreValido(nombre) && !existeDir(proyectsDir + "/" + nombre)) {
+        std::filesystem::rename(entry.path(), proyectsDir + "/" + nombre, ec);
+    }
+}
+```
+
+`esNombreValido()` es la **única** barrera: una carpeta del motor cuyo nombre no
+esté en la lista de reservados se comporta como un proyecto legacy.
+
+### 11.2 Síntomas
+
+- La carpeta se crea y el archivo se escribe en ella **correctamente**.
+- En el mismo arranque, la carpeta desaparece de su sitio y aparece anidada
+  dentro de `Proyects/`, con su contenido dentro.
+- El motor anuncia una ruta que ya no es la real: el log dice
+  `Log en: <raiz>/logs/…` y el archivo está en `<raiz>/Proyects/logs/…`.
+- En el arranque siguiente se crea una carpeta nueva y vacía, así que el
+  síntoma se renueva solo y parece intermitente.
+- No hay ningún error: `rename()` dentro del mismo volumen funciona.
+
+### 11.3 Causa raíz
+
+La lista de nombres reservados y la migración se escribieron en momentos
+distintos, y la lista no se revisó al añadir una carpeta nueva a la raíz. El
+defecto no está en la migración (que hace lo que debe para lo que conoce), sino
+en que **el conocimiento de "esto es mío" no tiene una fuente única**: vive en
+una lista de cadenas que se olvida actualizar.
+
+### 11.4 Solución canónica (Patrón R13 — declarar la reserva al crear la carpeta)
+
+**Toda carpeta que el motor cree dentro de la raíz de datos se declara reservada
+en el mismo cambio que la crea.** Si el nombre está reservado, la migración la
+ignora y el usuario tampoco puede elegirlo como nombre de proyecto, que es justo
+lo que tiene que pasar.
+
+```cpp
+// La lista es la frontera entre "carpeta del motor" y "proyecto del usuario".
+// Si añades una carpeta aquí abajo, añádela también a esReservado().
+static const char* reservados[] = {
+    "Proyects", "Configuraciones", "Exportaciones",
+    "Binarios", "Memory", "Interfaces", "Sonidos",
+    "Configuracion.json", "imgui.ini", "logs"
+};
+```
+
+Regla operativa: **la prueba de que una carpeta del motor no se mueve es que su
+nombre no es válido como proyecto.** No hace falta una lista paralela en el
+lugar donde se crea la carpeta.
+
+Checklist antes de cerrar un cambio que cree una carpeta en la raíz de datos:
+
+- [ ] El nombre está en `esReservado()` (o cumple el patrón `src*`).
+- [ ] Hay un test que fija `!esNombreValido(<nombre>)` para ese nombre.
+- [ ] El arranque completo del motor deja la carpeta donde se creó: se comprueba
+      en disco **después** de la inicialización, no justo después de crearla.
+- [ ] Si la carpeta puede convivir con proyectos, el nombre en pantalla y la
+      documentación la nombra en el árbol de la raíz.
+
+### 11.5 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `ProjectPaths::esReservado()` | Crear `logs/` en la raíz de datos al escribir el log de arranque | `std::filesystem` / cualquier SO | Patrón R13: `logs` pasa a ser nombre reservado, así `migrarProyectosAntiguos()` no la mueve a `Proyects/` y ningún proyecto puede usar ese nombre | `fix(ventana): escribir el log de arranque en una carpeta escribible` |
+
+---
+
+## 12. Octavo concepto: **Un valor horneado del build vale en su máquina y en ninguna más**
+
+Distinto de §6: aquí la ruta es correcta en el equipo que compiló y no
+existe en el del usuario. No hay permisos ni latencia de por medio; el valor
+viaja con el binario y apunta a un sitio que solo existe en la máquina
+de origen.
+
+### 12.1 Descripción del problema
+
+CMake hornea en el binario valores de su propia máquina: la ruta del
+compilador (`FUNSHI_CXX_COMPILER = ${CMAKE_CXX_COMPILER}`), la carpeta de
+cabeceras (`FUNSHI_SRC_DIR`), el flag de runtime del CRT. El build de
+desarrollo los tiene todos a mano, así que en el editor nunca se nota.
+
+Al publicar, el `.exe`/`setup.exe` que se distribuye lleva dentro rutas como
+
+    C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\…\cl.exe
+
+que en el equipo del usuario no existen. El motor invocaba esa ruta tal cual.
+
+### 12.2 Síntomas
+
+- El script C++ no compila en el paquete instalado. El error es
+  "no se encuentra el archivo" con una ruta de Visual Studio que el usuario
+  nunca escribió: no dice nada de por qué ni de qué hacer.
+- Con Visual Studio instalado y correcto en el equipo, el fallo persiste: la
+  ruta horneada no existe, así que tampoco se derivaba su `vcvars64.bat`, y el
+  compilador además habría necesitado ese entorno.
+- Con MinGW/g++ instalado, tampoco: la ruta horneada (de MSVC) tiene prioridad
+  sobre lo que el PATH sí sabe resolver.
+- En el build de desarrollo todo funciona, porque ahí las rutas sí existen.
+
+### 12.3 Causa raíz
+
+El valor horneado se consumía sin comprobar nada. Se daba por hecho que la
+máquina que ejecuta el binario es la que lo compiló, y ninguna de las tres
+piezas tenía un plan B: la ruta se invocaba sin preguntar si existe, la
+carpeta de cabeceras sin preguntar, y el entorno de vcvars se derivaba
+subiendo desde una ruta ajena (que por eso nunca aparecía).
+
+### 12.4 Solución canónica (Patrón R14 — Resolver en runtime, con el valor horneado como último recurso)
+
+**Un valor horneado es una pista, no una verdad.** Al consumirlo:
+
+1. **Override del entorno primero**, y gana siempre: es una petición explícita.
+2. **Comprobar que el valor horneado existe** antes de usarlo. Si no existe, no
+   se invoca: se pasa al siguiente paso.
+3. **Buscar la herramienta en la máquina**, como ya se hace con el JDK
+   (`ResolucionJdk`) y con las cabeceras (`RutaCabecerasScript`).
+4. **Degradar a un nombre sin ruta** (`cl`, `g++`, `javac`): lo resuelve el
+   PATH, que es lo único que se puede afirmar sin conocer la máquina. Con el
+   entorno de vcvars en el PATH, `cl` a secas funciona y además evita atar el
+   motor a una versión instalada.
+5. **Avisar cuando un override del entorno no existe**, en vez de fallar en
+   silencio más abajo con un mensaje que no apunta a la causa.
+
+Y para que la decisión sea verificable donde no hay Windows, dejarla en
+**funciones puras con los datos por parámetro** (`elegirCompilador`,
+`vcvars64EnRaices`, `RutaCabecerasScript::resolver`, `ResolucionJdk`), que el
+test ejercita con rutas falsas. "No existe" se simula con una ruta **debajo de
+un archivo regular**: falla igual en Linux y en Windows y no depende de
+permisos.
+
+### 12.5 Checklist
+
+- [ ] El valor que hornea CMake, ¿existe en la máquina del usuario? Si no,
+      ¿hay un plan B y está escrito?
+- [ ] ¿Hay un override por entorno, y gana sobre lo horneado?
+- [ ] ¿La degradación final es un nombre que resuelve el PATH?
+- [ ] ¿La decisión está aislada en una función testeable, con el caso "no
+      existe" simulado sin depender del SO ni de permisos?
+- [ ] El error que ve el usuario, ¿dice qué ruta se usó y por qué?
+- [ ] ¿Hay un sitio donde la ruta horneada aparece **sin** comprobar?
+      `grep FUNSHI_ CMakeLists.txt` para listarlos.
+- [ ] Si el horneado es la ruta de un **archivo** y el resolutor espera una
+      **carpeta**, ¿se reconoce como lo que es? Pasarlo donde esperan raíces lo
+      descarta en silencio, también en la máquina donde se compiló.
+- [ ] ¿Qué **tipo** de cosa hornea la variable de CMake (archivo o carpeta) y lo
+      sabe quien la consume?
+
+### 12.6 Registro de instancias
+
+| # | Ubicación | Operación | Herramienta/SO | Fix Aplicado | Commit |
+|---|-----------|-----------|----------------|--------------|--------|
+| 1 | `BackendCpp::compilador()` | Compilar un script C++ en el paquete instalado | CMake `CMAKE_CXX_COMPILER` / Visual Studio | Patrón R14: `FUNSHI_CXX` manda; el horneado solo si existe; si no `cl` del PATH con el toolset de la máquina o `g++`; aviso si el override no existe | `fix(scripts): resolver el compilador en la maquina y no solo en el build` |
+| 2 | `vcvars64Ruta()` | Derivar el entorno de MSVC del script | Visual Studio | Patrón R14: `vcvars64EnRaices` busca `vcvars64.bat` a dos niveles en las raíces de VS (cubre las Build Tools), con las raíces por parámetro | Ídem |
+| 3 | `RutaCabecerasScript::resolver` | Encontrar `include` en el paquete instalado | `include` relativo horneado | Instancia previa del mismo patrón (valor horneado como pista, se resuelve en runtime) | `fix(scripts): resolver las cabeceras del script en la maquina del usuario` |
+| 4 | `ResolucionJdk::conBibliotecaHorneada` | Encontrar la JVM cuando ninguna raíz del sistema trae `libjvm` | `JAVA_JVM_LIBRARY` horneado | El valor horneado es la ruta del **archivo**, no una raíz: en la lista de raíces se descartaba siempre. Se resuelve aparte, y solo si el archivo existe en esta máquina | `fix(scripts): usar la biblioteca horneada cuando existe en la maquina` |
+
+---
+
+## 13. Noveno concepto: **El motor web multiproceso relanza tu binario**
+
+### 13.1 Patrón
+
+CEF es multiproceso por diseño: el proceso principal lanza el **mismo
+ejecutable** (o `cef_subprocess.exe` en Windows si existe) con
+`--type=renderer|gpu-process|utility|zygote` para cada rol. El punto de
+entrada debe ejecutar `CefExecuteProcess` **lo primero en `main`** y cortar el
+proceso si ese rol no es el del motor: solo el proceso principal continúa con
+ventana, log, GL e inicialización de CEF (`CefInitialize`).
+
+### 13.2 Síntomas
+
+- El proceso "principal" arranca más de una ventana o una sola con el log
+  duplicado: el subproceso ejecutó la inicialización completa del motor.
+- `ps` muestra procesos `--type=...` que viven más que la ventana o mueren con
+  error al cerrar (apagado corrido dos veces o en el proceso equivocado).
+- Sin `CefInitialize` con `external_message_pump`, los callbacks de CEF no se
+  bombean y las vistas quedan sin pintar aunque `CefInitialize` haya devuelto
+  cierto.
+
+### 13.3 Causa
+
+El contrato de CEF exige que la bifurcación de rol ocurra **antes** de
+cualquier inicialización del motor (ver documentación CEF: `CefExecuteProcess`
+"should be called first in main"). Devuelve el código de salida del rol si el
+proceso es subproceso, o -1 si debe seguir. Poner la llamada después de abrir
+ventana/log/GL hace que el rol de subproceso arranque todo el motor a la vez
+que el proceso principal.
+
+### 13.4 Fix canónico
+
+```cpp
+// Al comienzo de main, antes de registrar señales/log/ventana/GL:
+const int codigo = WebUIRuntime::ejecutarSubproceso(argc, argv);
+if (codigo >= 0) return codigo;   // rol de subproceso: no se arranca el motor
+// -1: proceso principal, sigue el arranque normal.
+```
+
+`WebUIRuntime::ejecutarSubproceso` delega en el backend activo
+(`IWebUIBackend::ejecutarSubproceso`; el nulo devuelve -1). La inicialización
+va **después** de crear el contexto GL (`WebUIRuntime::inicializar`), el
+bombeo una vez por frame (`WebUIRuntime::bombear`, `CefDoMessageLoopWork` con
+`external_message_pump`) y el apagado (`WebUIRuntime::apagar` →
+`CefShutdown`) después de descargar todas las vistas y antes de romper
+ImGui/GL. Los mismos cuatro puntos van en `main.cpp` (editor) y
+`main_juego.cpp` (juego exportado), bajo `FUNSHI_CEF`.
+
+### 13.5 Checklist de mitigación
+
+- [ ] `ejecutarSubproceso` es la **primera** llamada del punto de entrada, sin
+      log ni ventana por delante.
+- [ ] El proceso que no es subproceso recibe -1 y el arranque sigue igual
+      (sin CEF compilado, el backend nulo devuelve -1 siempre).
+- [ ] `inicializar` se llama una vez, con el contexto GL creado; si falla, el
+      runtime cae al backend nulo y el motor sigue (nunca aborta).
+- [ ] `bombear` por frame en el hilo principal; `apagar` tras descargar vistas
+      y antes de destruir ImGui/GL.
+- [ ] El juego exportado repite los mismos cuatro puntos: con CEF compilado,
+      su binario **también** es el subproceso.
+- [ ] El runtime de CEF (`.so`/`.dll` + `resources.pak` + `icudtl.dat` +
+      `locales/`) queda junto al ejecutable; si falta, `inicializar` devuelve
+      false y la GUI muestra el motivo en la vista, sin romper el arranque.
+
+### 13.6 Registro de Instancias
+
+| # | Ubicación | Operación | Herramienta | Fix Aplicado | Commit |
+|---|-----------|-----------|-------------|--------------|--------|
+| 1 | `main.cpp::EjecutarMotor`, `main_juego.cpp::EjecutarJuego` | Arranque del editor y del juego exportado con backend CEF | CEF 154 multiproceso | Los cuatro puntos de §13.4 bajo `FUNSHI_CEF`, con fallback al backend nulo | `feat(webui): backend CEF off-screen, recarga en caliente y preview de interfaz` |
+
+Evidencia de la sonda previa (`FunshiEngineGL/sondas/cef_probe/`, local): con
+`CefExecuteProcess` al inicio de `main`, los roles `--type=gpu-process`,
+`--type=renderer`, `--type=utility` y `--type=zygote` se relanzaron sobre el
+mismo binario y la app principal siguió; `OnPaint` pintó el DOM con CSS/JS
+externos y el bitmap se subió a textura byte a byte.
+
+---
+
+## 14. Historial de Cambios
 
 | Fecha | Autor | Cambio |
 |-------|-------|--------|
 | 2026-09-27 | Gianfranco Ivan Enrique | Creación del documento; registro de instancias #1–3; definición de plantilla y checklist para agentes. |
+| 2026-10-04 | Gianfranco Ivan Enrique | Instancia #4: la biblioteca horneada de la JVM se pasaba donde se esperaban raíces de JDK y se descartaba siempre. Checklist ampliada con el tipo de dato horneado. |
 | 2026-09-27 | Gianfranco Ivan Enrique | Añadido el segundo concepto (Patrón R8, escritura rechazada en el directorio de instalación) con su registro de instancias, a raíz del crash al asignar un script en el binario instalado. |
+| 2026-09-27 | Gianfranco Ivan Enrique | Añadido el tercer concepto (Patrón R9, offsets engañosos de `tellg`/`seekg` en streams de texto con CRLF) con su instancia #1, a raíz del bug de los objetos fantasma "Scene" (H-17). |
+| 2026-09-27 | Gianfranco Ivan Enrique | Añadido el cuarto concepto (Patrón R10, `CREATE_UNICODE_ENVIRONMENT` obligatorio con bloques UTF-16 en `CreateProcessW`) con su instancia #1, a raíz del error 87 al pasar el entorno de vcvars/variable extra (H-3 nivel 2). |
+| 2026-09-28 | Gianfranco Ivan Enrique | Añadido el quinto concepto (Patrón R11, una imagen cargada bloquea su archivo en Windows) con su instancia #1, a raíz del `Permission denied` de `ld` al haber dos objetos sobre el mismo script (H-20). |
+| 2026-09-28 | Gianfranco Ivan Enrique | Añadida instancia #4 al primer concepto: drop entre paneles (ShowFolder → BrowseFile y ShowFolder → ShowFolder carpeta distinta) con invalidación explícita de cache grid en origen y destino. |
+| 2026-09-29 | Gianfranco Ivan Enrique | Añadido el sexto concepto (Patrón R12, un contexto Core Profile rechaza todo dibujo sin VAO ligado) con su instancia #1, a raíz del cielo degradado que no se dibujaba en un contexto 4.6 core. |
+| 2026-10-04 | Gianfranco Ivan Enrique | Añadido el octavo concepto (Patrón R14, un valor horneado del build vale en su máquina y en ninguna más) con sus instancias #1–#2, a raíz de los scripts C++ que no compilaban en el paquete instalado; registrada la instancia #5 del segundo concepto (instalación por usuario, sin UAC). |
+| 2026-10-03 | Gianfranco Ivan Enrique | Añadido el séptimo concepto (Patrón R13, una migración de compatibilidad se lleva las carpetas del motor) con su instancia #1, y registrada la instancia #4 del segundo concepto (Patrón R8, escritura rechazada en el directorio de instalación) a raíz del log de arranque que no se escribía instalado en `Program Files`. |
+| 2026-10-11 | Gianfranco Ivan Enrique | Añadido el Patrón R15 (el separador nativo manda al comparar rutas) a la tabla de patrones: `std::filesystem` arma `\logs` en Windows y los tests comparaban contra literales con `/`, lo que dejaba 6 comprobaciones rojas solo en windows-latest. |
+| 2026-10-11 | Gianfranco Ivan Enrique | Añadido el Patrón R16 (la resolución del `mtime` depende del toolchain, no del FS): la lectura del CRT de MinGW viene de `stat` (1 segundo) y su setter no aplica sobre directorios, de modo que el fallback de polling del `FileSystemWatcher` no observa cambios subsegundo ahi. El ctor del watcher ahora siembra el mtime real de la raíz en vez del epoch (evita un rescaneo vano al arrancar) y el intervalo quedó inyectable para poder probar el contrato. |
+| 2026-10-16 | Gianfranco Ivan Enrique | Añadido el noveno concepto (Patrón R17, el motor web multiproceso relanza tu binario): `CefExecuteProcess` al comienzo de `main` en editor y juego exportado, con init tras GL, bombeo por frame y apagado antes de romper ImGui/GL. |
+| 2026-10-20 | Gianfranco Ivan Enrique | Añadido el décimo concepto (Patrón R18, la imagen va a memoria local): el driver de Vulkan de la NVIDIA pierde el dispositivo al transferir con una imagen en memoria visible para la CPU, y el fallo pasaba inadvertido porque no se miraba el resultado de los envíos. |
 
 ---
 
-*Este documento es vivo: cada nuevo bug de esta clase debe registrarse en la tabla de su concepto (§2 para el primero, §6.5 para el segundo) y, si revela un patrón nuevo, añadirse a §4.*
+*Este documento es vivo: cada nuevo bug de esta clase debe registrarse en la tabla de su concepto (§2 para el primero, §6.5 para el segundo, §7.5 para el tercero, §8.5 para el cuarto, §9.5 para el quinto) y, si revela un patrón nuevo, añadirse a §4.*
+## CEF: "Invalid file descriptor to ICU data received" en InitializeICU
+
+- **Síntoma**: al arrancar el motor con `FUNSHI_CEF=ON`, `CefInitialize` aborta en
+  `base::i18n::InitializeICU()` con `Invalid file descriptor to ICU data received`
+  (SIGTRAP). Build y tests pasan; solo falla el arranque real.
+- **Evidencia**: `gdb` backtrace muestra el fallo en `CefInitialize` →
+  `content::ContentMainRunnerImpl::Initialize` → `base::i18n::InitializeICU`.
+  `icudtl.dat` está junto al binario y es válido (magic `90 00 da 27`).
+- **Causa probable**: diferencia entre la sonda funcional (`sondas/cef_probe/`) y
+  el motor en el arranque de CEF (argv[0]/cwd, archivos auxiliares como
+  `v8_context_snapshot.bin`, `chrome_*.pak`, o la configuración de `CefSettings`).
+  La sonda sí arranca; el motor no, pese a tener los mismos recursos.
+- **Causa real (resuelta 2026-10-17)**: CEF busca `icudtl.dat` (y el resto de
+  recursos) **en el directorio de `libcef.so`**, no junto al ejecutable. En el
+  build, `libcef.so` vive en `build-cef/cef/.../Release/` mientras que los
+  recursos se copiaban a `build-cef/` (junto al binario). Por eso
+  `InitializeICU` recibía un fd inválido.
+- **Fix**: copiar `icudtl.dat` (y `v8_context_snapshot.bin`, `resources.pak`,
+  `chrome_*.pak`, `locales/`) al directorio de `libcef.so`. Después de eso el
+  motor arrancó con `[webui] Backend activo: cef`.
+- **Estado**: resuelto para el build de desarrollo; el POST_BUILD de CMake debe
+  copiar los recursos junto a `libcef.so` (no solo junto al ejecutable) para que
+  el export y CI funcionen. El warning de `resources.pak` (no encontrado en el
+  cwd) es menor y se resuelve copiando también ese archivo.
+- **Checklist**: verificar que todos los archivos de la sonda estén copiados
+  (`v8_context_snapshot.bin`, `chrome_100/200_percent.pak`, `resources.pak`,
+  `icudtl.dat`, `locales/`, `libcef.so`), que `CefExecuteProcess` se llame
+  primero en `main`, y que `argv[0]` apunte al binario real.
+
+## 15. Décimo concepto: **El driver de Vulkan pierde el dispositivo con una imagen en memoria visible para la CPU**
+
+### 15.1 Descripción del problema
+
+En una máquina con dos GPUs (una NVIDIA GeForce GTX 1050 y una Intel HD
+Graphics 630), el driver de Vulkan de la NVIDIA **pierde el dispositivo**
+(`VK_ERROR_DEVICE_LOST`) en cuanto se hace una transferencia con la imagen
+asignada en memoria visible para la CPU (`VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT`).
+Con la misma carga, la GPU integrada responde bien.
+
+### 15.2 Síntomas
+
+- `vkQueueWaitIdle` devuelve `-4` (`VK_ERROR_DEVICE_LOST`) después del primer
+  envío con una copia buffer ↔ imagen.
+- El motor **no se queja**: los comandos enviados no llegan a ejecutarse y la
+  imagen queda vacía. Sin las capas de validación el fallo es silencioso, y
+  sin mirar el resultado de los envíos tampoco se ve.
+
+### 15.3 Causa raíz
+
+Una imagen con `VK_IMAGE_TILING_OPTIMAL` asignada en memoria del sistema (y
+no en memoria local del dispositivo) no es una combinacion que el driver
+soporte bien: la copia a esa imagen deja el dispositivo en mal estado.
+
+### 15.4 Solución canónica (Patrón R18 — la imagen va a memoria local)
+
+- **Las imagenes (render targets, texturas, swapchain) se asignan en memoria
+  `DEVICE_LOCAL`**: es donde deben estar, y es lo que evita el problema.
+- **Los buffers de paso (los que la CPU escribe y la GPU lee) si van en memoria
+  visible para la CPU** (`HOST_VISIBLE | HOST_COHERENT`): de ahi se copian a
+  la imagen con una copia de buffer a imagen.
+- **El resultado de los envíos se mira**: `vkQueueSubmit`, `vkQueueWaitIdle` y
+  `vkEndCommandBuffer` se comprueban, y un `VK_ERROR_DEVICE_LOST` se reporta
+  en el log en vez de dejarlo pasar en silencio.
+
+### 15.5 Checklist de mitigación
+
+- [ ] Toda imagen creada con `vkCreateImage` se asigna con memoria
+      `DEVICE_LOCAL` (`asignarMemoria` con `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT`).
+- [ ] Todo buffer que la CPU escribe y la GPU lee tiene
+      `HOST_VISIBLE | HOST_COHERENT` y se sube con una copia desde un buffer
+      de paso.
+- [ ] Los resultados de `vkQueueSubmit`, `vkQueueWaitIdle` y
+      `vkEndCommandBuffer` se comprueban y se reportan.

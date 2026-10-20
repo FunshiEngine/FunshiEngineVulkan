@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,9 @@
 
 #include "IPhysicsBackend.h"
 #include <btBulletDynamicsCommon.h>
+#include <set>
+#include <unordered_set>
+#include <vector>
 
 class BulletPhysicsAdapter final : public IPhysicsBackend {
 private:
@@ -32,6 +35,10 @@ private:
     btCollisionShape* groundShape;
     btDefaultMotionState* groundMotionState;
     btRigidBody* groundRigidBody;
+    std::unordered_set<RigidBody*> cuerpos_;
+    using ParColliders = std::pair<Collider*, Collider*>;
+    std::set<ParColliders> contactosAnteriores_;
+    std::vector<EventoContacto> eventosContacto_;
 
 public:
     BulletPhysicsAdapter();
@@ -39,6 +46,12 @@ public:
     void stepSimulation(float deltaTime) override;
     void addRigidBody(RigidBody* body) override;
     void removeRigidBody(RigidBody* body) override;
+    std::vector<EventoContacto> tomarEventosContacto() override;
+    void fijarGravedad(float x, float y, float z) override;
+    void gravedad(float& x, float& y, float& z) const override;
+
+private:
+    static ParColliders ordenarPar(Collider* a, Collider* b);
 };
 
 #endif

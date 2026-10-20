@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,7 @@ using namespace std;
 class EmptyListException : public RuntimeException {
 
 public:
-	EmptyListException(string msg) : RuntimeException(msg + " Lista Vacia") {}
+	EmptyListException(string msg) : RuntimeException(msg + " Lista Vacia", "EmptyListException") {}
 };
 
 #endif

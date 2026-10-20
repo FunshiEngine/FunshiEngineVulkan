@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,9 +19,12 @@
 #ifndef EDITOR_CONTROLLER_H
 #define EDITOR_CONTROLLER_H
 
+#include <functional>
 #include <memory>
+#include <vector>
 
 #include "Comandos/GestorComandos.h"
+#include "../Configuracion/DimensionProyecto.h"
 
 class Component;
 class GameObject;
@@ -30,6 +33,12 @@ class SceneRegistry;
 class EventBus;
 class Transform;
 class AssetManager;
+class PrefabLibrary;
+
+// Deleter para unique_ptr<PrefabLibrary> definido en el .cpp
+struct PrefabLibraryDeleter {
+    void operator()(PrefabLibrary* ptr) noexcept;
+};
 
 // Objetivo generico del gizmo: el Transform LOCAL a editar mas el Transform
 // GLOBAL del contexto padre (para recomponer/mover en espacio local). Con
@@ -67,6 +76,11 @@ private:
     // seleccion o borrar objetos.
     GizmoTarget gizmoTarget;
 
+    // Proveedor de la dimension del proyecto (lo inyecta GameScene, que es
+    // quien la conoce). Se usa para restringir los cuerpos al plano cuando el
+    // proyecto es 2D, reutilizando el freeze por ejes del RigidBody.
+    std::function<DimensionProyecto()> dimensionProvider;
+
     // Guia de eje activa: 0 = X, 1 = Y, 2 = Z, -1 = ninguna. Es la fuente de
     // verdad compartida por los tres consumidores de la funcionalidad:
     // el input (X/Y/Z la alternan), el gizmo (mientras haya guia NO se dibuja,
@@ -77,15 +91,27 @@ private:
     // Gestor de comandos para undo/redo
     GestorComandos gestorComandos;
 
+    // Biblioteca de prefabs (deleter definido en .cpp para evitar incluir header)
+    std::unique_ptr<PrefabLibrary, PrefabLibraryDeleter> prefabLibrary;
+
+    // true si el proyecto actual es 2D, segun el proveedor inyectado.
+    bool proyectoEs2D() const;
+
 public:
     EditorController(SceneRegistry* scene, PhysicsEngine* physics = nullptr,
                      EventBus* events = nullptr,
                      AssetManager* assetsManager = nullptr);
 
     void setScene(SceneRegistry* scene) noexcept;
+    SceneRegistry* getScene() const noexcept { return scene; }
+    // Inyecta el proveedor de dimension (GameScene). Sin el, el controlador
+    // asume 3D y no restringe ningun eje.
+    void setDimensionProvider(std::function<DimensionProyecto()> provider);
     void setPhysics(PhysicsEngine* physics) noexcept;
     void setEventBus(EventBus* events) noexcept;
     void setAssetManager(AssetManager* assetsManager) noexcept;
+    PrefabLibrary* getPrefabLibrary() noexcept { return prefabLibrary.get(); }
+    const PrefabLibrary* getPrefabLibrary() const noexcept { return prefabLibrary.get(); }
 
     // Raw pointers are non-owning scene views.
     GameObject* createGameObject(std::unique_ptr<GameObject> object,
@@ -93,9 +119,26 @@ public:
     bool deleteGameObject(GameObject* object);
     bool deleteObjectByID(int id);
     bool reparentGameObject(GameObject* object, GameObject* parent);
+    // Copia profunda del objeto y su subarbol como hijo de `parent` (raiz si
+    // es nulo). Inserta cada copia con createGameObject y registra sus
+    // cuerpos. Comparte el clonador con la gestion de objetos desde scripts.
+    GameObject* duplicarObjeto(GameObject* original, GameObject* parent);
+    // Extrae el subarbol sin destruirlo (para undo de borrar): desregistra sus
+    // cuerpos, limpia seleccion/gizmo si apuntan adentro y lo saca del
+    // registro. La raiz no se extrae (vacio).
+    std::vector<std::unique_ptr<GameObject>> extraerSubarbol(
+        GameObject* object);
+    // Restaura un subarbol extraido bajo `parent` (raiz si nulo o ausente) y
+    // re-registra sus cuerpos. Devuelve la cima restaurada.
+    GameObject* restaurarSubarbol(
+        std::vector<std::unique_ptr<GameObject>> nodos, GameObject* parent);
     void clearScene();
     bool addComponent(GameObject* object, std::unique_ptr<Component> component);
     bool removeComponent(GameObject* object, Component* component);
+    // Extraccion sin destruir (para undo): espeja removeComponent pero devuelve
+    // el componente vivo en vez de liberarlo. Null si no estaba.
+    std::unique_ptr<Component> extraerComponente(GameObject* object,
+                                                 Component* component);
 
     // Registra los RigidBody de TODA la escena en el mundo de fisica. Al
     // deserializar una escena, los componentes se crean con GameObject::

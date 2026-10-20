@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -136,6 +136,25 @@ int main() {
               "reset notifica Reiniciar para reaplicar el resto del motor");
     }
 
+    // 5b. Reaplicar el mismo perfil de apariencia no notifica: el arranque
+    //     aplica la apariencia cargada y no debe contar como cambio del usuario.
+    {
+        MenuModel m;
+        Apariencia ap;
+        ap.temaClaro = true;
+        m.setApariencia(ap);
+
+        int avisos = 0;
+        m.setOnCampoCambio([&](MenuModel::Campo) { ++avisos; });
+        m.setApariencia(ap);
+        CHECK(avisos == 0, "setApariencia con el mismo perfil no notifica");
+
+        Apariencia otro = ap;
+        otro.blancoYNegro = true;
+        m.setApariencia(otro);
+        CHECK(avisos == 1, "setApariencia con perfil distinto si notifica");
+    }
+
     // 6. La sensibilidad ignora valores no positivos.
     {
         MenuModel m;
@@ -192,6 +211,110 @@ int main() {
         m.limpiarProyectoARenombrar();
         CHECK(m.getProyectoARenombrar().empty(),
               "confirmar/volver limpian el registro");
+    }
+
+    // 10. Seccion de la barra ConfigProyecto (por defecto abre en Crear).
+    {
+        MenuModel m;
+        CHECK(m.getVista() == MenuModel::Vista::Principal,
+              "el menu abre en Principal");
+        m.abrirConfigProyecto();
+        CHECK(m.getVista() == MenuModel::Vista::ConfigProyecto,
+              "abrirConfigProyecto cambia la vista");
+        CHECK(m.getSeccionConfig() == MenuModel::SeccionConfig::CrearProyecto,
+              "ConfigProyecto abre en Crear proyecto");
+        m.setSeccionConfig(MenuModel::SeccionConfig::Proyectos);
+        CHECK(m.getSeccionConfig() == MenuModel::SeccionConfig::Proyectos,
+              "setSeccionConfig a Proyectos");
+        m.setSeccionConfig(MenuModel::SeccionConfig::Importar);
+        CHECK(m.getSeccionConfig() == MenuModel::SeccionConfig::Importar,
+              "setSeccionConfig a Importar");
+        m.setSeccionConfig(MenuModel::SeccionConfig::CrearProyecto);
+        CHECK(m.getSeccionConfig() == MenuModel::SeccionConfig::CrearProyecto,
+              "setSeccionConfig de vuelta a Crear");
+        m.volver();
+        CHECK(m.getVista() == MenuModel::Vista::Principal,
+              "volver regresa al menu principal");
+        m.abrirConfigProyecto();
+        CHECK(m.getSeccionConfig() == MenuModel::SeccionConfig::CrearProyecto,
+              "reabrir ConfigProyecto vuelve a Crear proyecto");
+    }
+
+    // 11. Intencion de proyecto (Abrir/Crear/Ninguna).
+    {
+        MenuModel m;
+        CHECK(m.getAccionProyecto() == MenuModel::AccionProyecto::Ninguna,
+              "accion por defecto = Ninguna");
+        m.setAccionProyecto(MenuModel::AccionProyecto::Abrir);
+        CHECK(m.getAccionProyecto() == MenuModel::AccionProyecto::Abrir,
+              "elegir carpeta registra Abrir");
+        m.setAccionProyecto(MenuModel::AccionProyecto::Crear);
+        CHECK(m.getAccionProyecto() == MenuModel::AccionProyecto::Crear,
+              "dialogo de creacion registra Crear");
+        m.limpiarAccionProyecto();
+        CHECK(m.getAccionProyecto() == MenuModel::AccionProyecto::Ninguna,
+              "limpiar accion vuelve a Ninguna");
+    }
+
+    // 12. Dimension elegida para el proyecto nuevo (por defecto 3D).
+    {
+        MenuModel m;
+        CHECK(m.getDimensionProyecto() == DimensionProyecto::TresD,
+              "dimension por defecto = 3D");
+        m.setDimensionProyecto(DimensionProyecto::DosD);
+        CHECK(m.getDimensionProyecto() == DimensionProyecto::DosD,
+              "tarjeta 2D registra la dimension");
+        m.setDimensionProyecto(DimensionProyecto::TresD);
+        CHECK(m.getDimensionProyecto() == DimensionProyecto::TresD,
+              "tarjeta 3D registra la dimension");
+    }
+
+    // 13. Claves nuevas del diseno por secciones (es/en).
+    {
+        MenuModel m;
+        CHECK(m.traducir("crear_proyecto") == "Crear proyecto",
+              "clave crear_proyecto es");
+        CHECK(m.traducir("importar_proyecto") == "Importar proyecto",
+              "clave importar_proyecto es");
+        CHECK(m.traducir("proyecto_actual") == "Proyecto actual",
+              "clave proyecto_actual es");
+        CHECK(m.traducir("dimension") == "Tipo de proyecto",
+              "clave dimension es");
+        CHECK(m.traducir("dimension_2d") == "2D - Plano",
+              "clave dimension_2d es");
+        CHECK(m.traducir("dimension_3d") == "3D - Profundidad",
+              "clave dimension_3d es");
+        CHECK(m.traducir("crear") == "Crear", "clave crear es");
+        CHECK(m.traducir("cancelar") == "Cancelar", "clave cancelar es");
+        m.setIdioma("English");
+        CHECK(m.traducir("crear_proyecto") == "Create project",
+              "clave crear_proyecto en");
+        CHECK(m.traducir("importar_proyecto") == "Import project",
+              "clave importar_proyecto en");
+        CHECK(m.traducir("proyecto_actual") == "Current project",
+              "clave proyecto_actual en");
+        CHECK(m.traducir("dimension_2d") == "2D - Flat", "clave dimension_2d en");
+        CHECK(m.traducir("dimension_3d") == "3D - Depth", "clave dimension_3d en");
+        CHECK(m.traducir("crear") == "Create", "clave crear en");
+        CHECK(m.traducir("cancelar") == "Cancel", "clave cancelar en");
+        CHECK(m.traducir("aviso_no_revertir").find("cannot") != std::string::npos,
+              "aviso_no_revertir en menciona que no se puede");
+    }
+
+    // 14. existeProyecto valida nombres repetidos del dialogo de creacion:
+    //     coincidencia exacta y, en Windows, sin distinguir mayusculas (igual
+    //     que su filesystem).
+    {
+        MenuModel m;
+        m.setProyectosDisponibles({"MiProyecto", "Otro"});
+        CHECK(m.existeProyecto("MiProyecto"), "detecta nombre igual");
+        CHECK(m.existeProyecto("Otro"), "detecta segundo nombre");
+        CHECK(!m.existeProyecto("Inexistente"), "no detecta nombre distinto");
+        CHECK(!m.existeProyecto(""), "nombre vacio nunca existe");
+#ifdef _WIN32
+        CHECK(m.existeProyecto("miproyecto"),
+              "en Windows no distingue mayusculas");
+#endif
     }
 
     std::cout << "Pruebas: " << total << ", fallos: " << fallos << std::endl;

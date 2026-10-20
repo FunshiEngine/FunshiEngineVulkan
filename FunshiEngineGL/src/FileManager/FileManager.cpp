@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -327,7 +327,10 @@ std::string FileManager::plantillaScript(const std::string& clase, bool esJava) 
         "};\n"
         "\n"
         "// Export requerida por el backend del motor; no renombrar.\n"
-        "extern \"C\" IScriptBehaviour* FUNSHI_CREAR_COMPORTAMIENTO(\n"
+        "// En Windows/MSVC la fabrica viaja marcada con\n"
+        "// FUNSHI_COMPORTAMIENTO_EXPORT: sin ese atributo la .dll compila pero\n"
+        "// no exporta el simbolo y el motor no la encuentra (GetProcAddress).\n"
+        "extern \"C\" FUNSHI_COMPORTAMIENTO_EXPORT IScriptBehaviour* FUNSHI_CREAR_COMPORTAMIENTO(\n"
         "    const MotorScript::ApiScriptGameObject* api) {\n"
         "    (void)api;\n"
         "    return new FUNSHI_NOMBRE_CLASE();\n"

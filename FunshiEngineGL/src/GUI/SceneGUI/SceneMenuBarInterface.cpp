@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,16 +17,32 @@
     SPDX-License-Identifier: Apache-2.0
 */
 #include "SceneMenuBarInterface.h"
-
 #include "../WindowNames.h"
+#include "../../Herramientas/IconosGUI/IconosGUI.h"
 
 SceneMenuBarInterface::SceneMenuBarInterface(bool state)
     : GeneralUserInterface("MenuBar", state, ImGuiWindowFlags_MenuBar), toggleBool(nullptr) {}
 void SceneMenuBarInterface::setActivador(bool* target) { toggleBool = target; }
+
+void SceneMenuBarInterface::setPausa(bool* pausada) noexcept {
+    pausada_ = pausada;
+}
+
+void SceneMenuBarInterface::setModoJuego(bool* modoJuego) noexcept {
+    modoJuego_ = modoJuego;
+}
+
+void SceneMenuBarInterface::setAccionSimulacion(
+    std::function<void(AccionSimulacion)> accion) {
+    accionSimulacion_ = std::move(accion);
+}
+
+void SceneMenuBarInterface::setIconosGUI(IconosGUI* iconos) noexcept {
+    iconosGUI_ = iconos;
+}
+
 void SceneMenuBarInterface::setGizmoGlobal(bool* target) { gizmoGlobal = target; }
 bool* SceneMenuBarInterface::getActivador() { return toggleBool; }
-bool SceneMenuBarInterface::getCargarScripts() { return cargarScripts; }
-void SceneMenuBarInterface::setCargarScripts(bool value) { cargarScripts = value; }
 void SceneMenuBarInterface::setEditorEventBus(EditorEventBus* bus) {
     busEditor = bus;
 }
@@ -44,9 +60,15 @@ void SceneMenuBarInterface::initGUI() {
     ImGui::Begin(getNameGui().c_str(), &stateGUI, getFlagGui());
     ImGui::PushID(this);
 
-    // Actualizar dialogo de exportación si está abierto
+    // El dialogo de exportacion se renderiza aqui y el dueno lo destruye
+    // DESPUES de render(), nunca dentro: hacerlo dentro dejaria el frame
+    // corriendo sobre el objeto liberado.
     if (mostrarExportDialog_ && exportDialog_) {
         exportDialog_->render();
+        if (exportDialog_->debeCerrarse()) {
+            mostrarExportDialog_ = false;
+            exportDialog_.reset();
+        }
     }
 }
 // Etiqueta en espanol por WindowName para el menu "Ventanas"; nullptr para las
@@ -56,17 +78,33 @@ static const char* etiquetaVentana(const std::string& nombre) {
     if (nombre == WindowNames::ShowFolder) return "Vista de contenido";
     if (nombre == WindowNames::SelectedObjects) return "Objetos seleccionados";
     if (nombre == WindowNames::Status) return "Barra de estado";
+    if (nombre == WindowNames::Terminal) return "Terminal";
     return nullptr;
 }
+
+static bool botonSimulacion(const char* id, const char* etiqueta,
+                            ImTextureID icono, const ImVec2& tamano) {
+    const bool activado = ImGui::Button(id, tamano);
+    const ImVec2 minimo = ImGui::GetItemRectMin();
+    const bool tieneIcono = icono != ImTextureID_Invalid;
+    if (tieneIcono) {
+        const float lado = 20.0f;
+        const ImVec2 posicion(minimo.x + (tamano.x - lado) * 0.5f,
+                              minimo.y + (tamano.y - lado) * 0.5f);
+        ImGui::GetWindowDrawList()->AddImage(
+            icono, posicion, ImVec2(posicion.x + lado, posicion.y + lado));
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", etiqueta);
+    return activado;
+}
+
 void SceneMenuBarInterface::contentGUI() {
+    ImGui::BeginDisabled(modoJuego_ && *modoJuego_);
     ImGui::BeginMenuBar();
     if (ImGui::BeginMenu("Archivo")) {
         if (ImGui::MenuItem("Exportar juego")) {
             if (!exportDialog_) {
-                exportDialog_ = std::make_unique<ExportDialog>([this](const ExportDialog::Resultado& r) {
-                    mostrarExportDialog_ = false;
-                    exportDialog_.reset();
-                }, proyectoActual_);
+                exportDialog_ = std::make_unique<ExportDialog>(proyectoActual_);
             }
             mostrarExportDialog_ = true;
         }
@@ -79,7 +117,8 @@ void SceneMenuBarInterface::contentGUI() {
     if (ImGui::BeginMenu("Ventanas")) {
         static const char* kVentanasEditables[] = {
             WindowNames::BrowseFile, WindowNames::ShowFolder,
-            WindowNames::SelectedObjects, WindowNames::Status};
+            WindowNames::SelectedObjects, WindowNames::Status,
+            WindowNames::Terminal};
         for (const char* nombre : kVentanasEditables) {
             const char* etiqueta = etiquetaVentana(nombre);
             if (!etiqueta) continue;
@@ -111,26 +150,58 @@ void SceneMenuBarInterface::contentGUI() {
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
+    ImGui::EndDisabled();
     if (!toggleBool) return;
-    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 100) * 0.5f);
-    // Boton play/stop: el texto y el color cambian segun el estado para que
-    // quede claro que el mismo boton activa y detiene la simulacion.
     const bool activo = *toggleBool;
-    const ImVec4 color =
-        activo ? ImVec4(0.72f, 0.22f, 0.22f, 1.0f)   // Detener (rojo)
-               : ImVec4(0.16f, 0.55f, 0.24f, 1.0f);  // Activar (verde)
-    const ImVec4 hover = activo ? ImVec4(0.85f, 0.30f, 0.30f, 1.0f)
-                                : ImVec4(0.24f, 0.68f, 0.32f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, color);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, color);
-    if (ImGui::Button(activo ? "Detener" : "Activar", ImVec2(100, 30))) {
-        *toggleBool = !*toggleBool;
-        cargarScripts = true;
+    ImGui::SetCursorPosX(
+        (ImGui::GetWindowWidth() - (activo ? 300.0f : 100.0f)) * 0.5f);
+    if (activo) {
+        const bool pausada = pausada_ && *pausada_;
+        const ImTextureID iconoPausa =
+            pausada && iconosGUI_ ? iconosGUI_->getIconoPlay()
+                                  : iconosGUI_ ? iconosGUI_->getIconoPausa()
+                                               : ImTextureID_Invalid;
+        if (botonSimulacion("##pausa", pausada ? "Reanudar" : "Pausa",
+                            iconoPausa,
+                            ImVec2(40, 32)) &&
+            accionSimulacion_) {
+            accionSimulacion_(AccionSimulacion::Pausa);
+        }
+        ImGui::SameLine();
+        if (botonSimulacion("##reset", "Reset",
+                            iconosGUI_ ? iconosGUI_->getIconoReset()
+                                       : ImTextureID_Invalid,
+                            ImVec2(40, 32)) &&
+            accionSimulacion_)
+            accionSimulacion_(AccionSimulacion::Reset);
+        ImGui::SameLine();
+        if (botonSimulacion("##terminar", "Terminar",
+                            iconosGUI_ ? iconosGUI_->getIconoStop()
+                                       : ImTextureID_Invalid,
+                            ImVec2(40, 32)) &&
+            accionSimulacion_)
+            accionSimulacion_(AccionSimulacion::Terminar);
+        ImGui::SameLine();
+        ImGui::Text("Estado: %s%s",
+                    pausada ? "PAUSADO" : "ACTIVO",
+                    modoJuego_ && *modoJuego_ ? " (Juego)" : " (Depuracion)");
+    } else {
+        if (botonSimulacion("##depuracion", "Depuración",
+                            iconosGUI_ ? iconosGUI_->getIconoDepuracion()
+                                       : ImTextureID_Invalid,
+                            ImVec2(40, 32)) &&
+            accionSimulacion_) {
+            accionSimulacion_(AccionSimulacion::IniciarDepuracion);
+        }
+        ImGui::SameLine();
+        if (botonSimulacion("##juego", "Juego",
+                            iconosGUI_ ? iconosGUI_->getIconoPlay()
+                                       : ImTextureID_Invalid,
+                            ImVec2(40, 32)) &&
+            accionSimulacion_) {
+            accionSimulacion_(AccionSimulacion::IniciarJuego);
+        }
     }
-    ImGui::PopStyleColor(3);
-    ImGui::SameLine();
-    ImGui::Text(activo ? "Estado: ACTIVO" : "Estado: INACTIVO");
 }
 void SceneMenuBarInterface::endGUI() { ImGui::PopID(); ImGui::End(); }
 void SceneMenuBarInterface::printGUI() {

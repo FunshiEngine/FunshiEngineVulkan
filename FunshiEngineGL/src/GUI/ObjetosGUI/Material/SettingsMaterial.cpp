@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,9 +25,8 @@
 #include "../../../Objetos/Componentes/Material.h"
 #include <imgui.h>
 
-SettingsMaterial::SettingsMaterial(GameObject* gameObject) {
-	this->gameObject = gameObject;
-}
+SettingsMaterial::SettingsMaterial(GameObject* gameObject)
+    : SettingsComponent(demangle(typeid(Material).name())), gameObject(gameObject) {}
 
 void SettingsMaterial::showDataComponent() {
 	Material* material = gameObject->getComponent<Material>();
@@ -109,8 +108,4 @@ void SettingsMaterial::showDataComponent() {
 	             &Material::setNormalMapPath);
 	campoTextura("Emision", material->getEmissionMapPath(),
 	             &Material::setEmissionMapPath);
-}
-
-Component* SettingsMaterial::getComponent() {
-	return gameObject->getComponent<Material>();
 }

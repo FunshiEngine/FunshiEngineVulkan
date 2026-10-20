@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,18 +19,15 @@
 #ifndef SETTINGSMATERIAL_H
 #define SETTINGSMATERIAL_H
 #include "../SettingsComponent.h"
-class GameObject;
-class Material;
+#include "../../../Objetos/GameObject.h"
+#include "../../../Objetos/Componentes/Material.h"
 
 class SettingsMaterial : public SettingsComponent {
 	GameObject* gameObject;
-	// Indice del preset aplicado (MaterialPresets): -1 = Personalizado, 0..5
-	// = ultimo preset elegido. Cualquier edicion manual lo vuelve a -1.
 	int presetAplicado = -1;
 public:
-	SettingsMaterial(GameObject* gameObject);
-
+	explicit SettingsMaterial(GameObject* gameObject);
 	void showDataComponent() override;
-	Component* getComponent() override;
+	Component* getComponent() override { return gameObject ? gameObject->getComponent<Material>() : nullptr; }
 };
 #endif

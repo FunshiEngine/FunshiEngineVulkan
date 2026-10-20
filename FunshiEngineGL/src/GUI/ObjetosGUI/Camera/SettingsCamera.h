@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,15 +19,21 @@
 #ifndef SETTINGSCAMERA_H
 #define SETTINGSCAMERA_H
 #include "../SettingsComponent.h"
-class GameObject;
-class CameraComponent;
+#include "../../../Objetos/GameObject.h"
+#include "../../../Objetos/Componentes/CameraComponent.h"
+#include "../../../Configuracion/DimensionProyecto.h"
 
 class SettingsCamera : public SettingsComponent {
 	GameObject* gameObject;
+	// Dimension del proyecto: en 2D la camara es siempre ortografica, asi que
+	// se ocultan el selector de proyeccion y el FOV.
+	DimensionProyecto dimension_ = DimensionProyecto::TresD;
 public:
-	SettingsCamera(GameObject* gameObject);
-
+	explicit SettingsCamera(GameObject* gameObject);
+	void setDimension(DimensionProyecto dimension) noexcept {
+		dimension_ = dimension;
+	}
 	void showDataComponent() override;
-	Component* getComponent() override;
+	Component* getComponent() override { return gameObject ? gameObject->getComponent<CameraComponent>() : nullptr; }
 };
 #endif

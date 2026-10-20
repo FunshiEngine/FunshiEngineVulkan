@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,9 @@
 */
 #include "CameraComponent.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 #include "../GameObject.h"
@@ -31,6 +33,13 @@ namespace {
 
 constexpr float kPi = 3.14159265358979f;
 constexpr float kGradosARadianes = kPi / 180.f;
+
+// Marca y version del bloque binario de la camara. Las escenas previas a la
+// proyeccion guardaban los campos directamente, sin cabecera: al leer se
+// reconoce esta marca para distinguir el formato nuevo y, si no esta, se
+// retrocede el cursor y se interpreta el layout historico (perspectiva).
+constexpr std::uint32_t kCameraMagic = 0x43414D32; // "CAM2"
+constexpr std::uint32_t kCameraVersion = 2;
 
 // Tope del pitch de la camara (mouse look): sin esto la camara se "da vuelta"
 // al mirar hacia arriba/abajo y el vector "left" degenere (m_up fijo y
@@ -75,20 +84,56 @@ CameraComponent::CameraComponent() {
 
 void CameraComponent::serializeComponent(std::ofstream* file) {
     if (!file || !file->is_open()) return;
+    const std::uint32_t magic = kCameraMagic;
+    const std::uint32_t version = kCameraVersion;
+    file->write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    file->write(reinterpret_cast<const char*>(&version), sizeof(version));
     file->write(reinterpret_cast<const char*>(&fov), sizeof(float));
     file->write(reinterpret_cast<const char*>(&nearPlane), sizeof(float));
     file->write(reinterpret_cast<const char*>(&farPlane), sizeof(float));
     file->write(reinterpret_cast<const char*>(&speed), sizeof(float));
     file->write(reinterpret_cast<const char*>(&pintar), sizeof(bool));
+    const std::int32_t proyeccion = static_cast<std::int32_t>(projection);
+    file->write(reinterpret_cast<const char*>(&proyeccion), sizeof(proyeccion));
+    file->write(reinterpret_cast<const char*>(&orthoSize), sizeof(float));
 }
 
 void CameraComponent::deserializeComponent(std::ifstream* file) {
     if (!file || !file->is_open()) return;
+
+    std::uint32_t magic = 0;
+    file->read(reinterpret_cast<char*>(&magic), sizeof(magic));
+
+    if (*file && magic == kCameraMagic) {
+        std::uint32_t version = 0;
+        file->read(reinterpret_cast<char*>(&version), sizeof(version));
+        file->read(reinterpret_cast<char*>(&fov), sizeof(float));
+        file->read(reinterpret_cast<char*>(&nearPlane), sizeof(float));
+        file->read(reinterpret_cast<char*>(&farPlane), sizeof(float));
+        file->read(reinterpret_cast<char*>(&speed), sizeof(float));
+        file->read(reinterpret_cast<char*>(&pintar), sizeof(bool));
+        std::int32_t proyeccion = 0;
+        file->read(reinterpret_cast<char*>(&proyeccion), sizeof(proyeccion));
+        file->read(reinterpret_cast<char*>(&orthoSize), sizeof(float));
+        projection = proyeccion == static_cast<std::int32_t>(
+                                      Projection::Orthographic)
+                         ? Projection::Orthographic
+                         : Projection::Perspective;
+        return;
+    }
+
+    // Sin marca: bloque historico (fov, near, far, speed, vista previa). Se
+    // retrocede lo que se leyo de mas y se completa con los valores por
+    // defecto de la proyeccion, que por entonces siempre era perspectiva.
+    file->clear();
+    file->seekg(-static_cast<std::streamoff>(sizeof(magic)), std::ios::cur);
     file->read(reinterpret_cast<char*>(&fov), sizeof(float));
     file->read(reinterpret_cast<char*>(&nearPlane), sizeof(float));
     file->read(reinterpret_cast<char*>(&farPlane), sizeof(float));
     file->read(reinterpret_cast<char*>(&speed), sizeof(float));
     file->read(reinterpret_cast<char*>(&pintar), sizeof(bool));
+    projection = Projection::Perspective;
+    orthoSize = 5.0f;
 }
 
 void CameraComponent::saveComponent(std::ofstream* file) {
@@ -161,20 +206,63 @@ void CameraComponent::escribirATransform() {
     const float axisY[3] = {0.f, 1.f, 0.f};
     const float axisX[3] = {1.f, 0.f, 0.f};
 
-    glm::mat4 mat(1.0f);
-    mat = glm::translate(mat, glm::vec3(m_pos[0], m_pos[1], m_pos[2]));
-    // R = RY(-yawX) * RX(-yawY), misma convencion que la dir FPS:
-    // dir = (+sin yawX cos yawY, -sin yawY, -cos yawX cos yawY).
-    // yawX/yawY se conservan en grados; glm::rotate espera radianes.
-    mat = glm::rotate(mat, -yawX * kGradosARadianes,
-                      glm::vec3(axisY[0], axisY[1], axisY[2]));
-    mat = glm::rotate(mat, -yawY * kGradosARadianes,
-                      glm::vec3(axisX[0], axisX[1], axisX[2]));
-    mat = glm::scale(mat, glm::vec3(scale[0], scale[1], scale[2]));
+    // Construir matriz mundo: T(m_pos) * RY(-yawX) * RX(-yawY) * S(scaleLocal)
+    glm::mat4 matMundo(1.0f);
+    matMundo = glm::translate(matMundo, glm::vec3(m_pos[0], m_pos[1], m_pos[2]));
+    matMundo = glm::rotate(matMundo, -yawX * kGradosARadianes,
+                           glm::vec3(axisY[0], axisY[1], axisY[2]));
+    matMundo = glm::rotate(matMundo, -yawY * kGradosARadianes,
+                           glm::vec3(axisX[0], axisX[1], axisX[2]));
+    matMundo = glm::scale(matMundo, glm::vec3(scale[0], scale[1], scale[2]));
 
-    const float* ptr = glm::value_ptr(mat);
+    glm::mat4 matLocal = matMundo;
+    if (owner) {
+        Transform* parentGlobal = nullptr;
+        GameObject* parentObj = dynamic_cast<GameObject*>(owner->getParentEntity());
+        if (parentObj) {
+            parentGlobal = parentObj->getGlobalTransform();
+        } else {
+            Entity* pe = owner->getParentEntity();
+            if (pe && pe->getOriginTransform()) {
+                parentGlobal = pe->getOriginTransform();
+            }
+        }
+        if (parentGlobal) {
+            float parentMatArr[16];
+            buildMatrixFromTransform(parentGlobal, parentMatArr);
+            bool parentFinito = true;
+            for (int i = 0; i < 16; ++i) {
+                if (!std::isfinite(parentMatArr[i])) { parentFinito = false; break; }
+            }
+            if (parentFinito) {
+                glm::mat4 mParent = glm::make_mat4(parentMatArr);
+                // Skip compensation if parent is effectively identity
+                bool isIdentity = true;
+                for (int i = 0; i < 4 && isIdentity; ++i) {
+                    for (int j = 0; j < 4 && isIdentity; ++j) {
+                        float v = parentMatArr[i*4+j];
+                        float expect = (i==j) ? 1.0f : 0.0f;
+                        if (std::fabs(v - expect) > 1e-5f) isIdentity = false;
+                    }
+                }
+                if (!isIdentity) {
+                    glm::mat4 invParent = glm::inverse(mParent);
+                    const float* invp = glm::value_ptr(invParent);
+                    bool invFinito = true;
+                    for (int i = 0; i < 16; ++i) {
+                        if (!std::isfinite(invp[i])) { invFinito = false; break; }
+                    }
+                    if (invFinito) {
+                        matLocal = invParent * matMundo;
+                    }
+                }
+            }
+        }
+    }
+
     float arr[16];
-    std::memcpy(arr, ptr, sizeof(float) * 16);
+    const float* ptrLocal = glm::value_ptr(matLocal);
+    std::memcpy(arr, ptrLocal, sizeof(float) * 16);
     decomposeMatrixToTransform(arr, transform);
 }
 
@@ -324,8 +412,26 @@ void CameraComponent::getViewMatrix(float* outMatrix) const {
 }
 
 void CameraComponent::getProjectionMatrix(float* outMatrix, float aspect) const {
-    glm::mat4 p = glm::perspective(glm::radians(fov), aspect, nearPlane,
-                                   farPlane);
+    getProjectionMatrix(outMatrix, aspect, farPlane);
+}
+
+void CameraComponent::getProjectionMatrix(float* outMatrix, float aspect,
+                                          float limiteFarPlane) const {
+    glm::mat4 p(1.0f);
+    if (projection == Projection::Orthographic) {
+        // La ortografica no converge: el volumen es una caja de media altura
+        // orthoSize y media anchura orthoSize*aspect. El limite de far plane
+        // (que la perspectiva usa para no recortar el difuminado del piso) no
+        // aplica aqui, asi que se ignora.
+        const float mediaAltura = orthoSize;
+        const float mediaAnchura = orthoSize * aspect;
+        p = glm::ortho(-mediaAnchura, mediaAnchura, -mediaAltura, mediaAltura,
+                       nearPlane, farPlane);
+    } else {
+        const float maxFar = std::max(nearPlane + 0.01f, limiteFarPlane);
+        const float farEfectivo = std::min(farPlane, maxFar);
+        p = glm::perspective(glm::radians(fov), aspect, nearPlane, farEfectivo);
+    }
     const float* ptr = glm::value_ptr(p);
     std::memcpy(outMatrix, ptr, sizeof(float) * 16);
 }

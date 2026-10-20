@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,12 +31,18 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "TempPruebas.h"
 #include "../FunshiEngineGL/src/Configuracion/EditorConfig.h"
 #include "../FunshiEngineGL/src/Configuracion/ProjectPaths.h"
+#include "../FunshiEngineGL/src/Exportador/RutasExportacion.h"
+#include "../FunshiEngineGL/src/Configuracion/ProyectoInicial.h"
+#include "../FunshiEngineGL/src/Configuracion/Apariencia.h"
+#include "../FunshiEngineGL/src/Configuracion/RutasLog.h"
 
 namespace fs = std::filesystem;
 
@@ -68,7 +74,8 @@ int main() {
         EditorConfig cfg;
         cfg.cargarGeneral(rutaGeneral);
         cfg.cargarProyecto(proyNombreTest, rutaProyecto);
-        CHECK(cfg.datos().nombreProyecto == "Nuevo Proyecto", "default nombreProyecto");
+        CHECK(cfg.datos().nombreProyecto.empty(),
+              "default nombreProyecto (sin proyecto abierto)");
         CHECK(cfg.datos().idioma == "Espanol", "default idioma");
         CHECK(cfg.datos().sensibilidadCamara == 0.15f, "default sensibilidad");
         CHECK(cfg.datos().sensibilidadMovimientoCamara == 1.0f,
@@ -77,10 +84,126 @@ int main() {
         CHECK(cfg.datos().gizmoOperacion == 7, "default gizmoOperacion");
         CHECK(cfg.datos().gizmoGlobal == false, "default gizmo LOCAL");
         CHECK(cfg.datos().camaraActivaId == -1, "default camaraActivaId");
+        CHECK(cfg.datos().dimension == DimensionProyecto::TresD,
+              "default dimension 3D");
         CHECK(cfg.datos().estadoVentanas.empty(), "default sin ventanas");
         CHECK(cfg.datos().apariencia.temaClaro == false, "default tema oscuro");
         CHECK(cfg.datos().apariencia.blancoYNegro == false, "default no B/N");
         CHECK(cfg.datos().apariencia.acento[3] == 1.0f, "default acento opaco");
+        CHECK(cfg.datos().apariencia.radioDifuminado ==
+                  AparienciaUtil::kRadioDifuminadoPorDefecto,
+              "default radio de difuminado");
+        // Defaults de colores del cielo (gris oscuro historico)
+        CHECK(cfg.datos().apariencia.fondoSuperior[0] == 0.10f &&
+                  cfg.datos().apariencia.fondoSuperior[1] == 0.10f &&
+                  cfg.datos().apariencia.fondoSuperior[2] == 0.10f,
+              "default fondoSuperior = 0.1, 0.1, 0.1");
+        CHECK(cfg.datos().apariencia.fondoInferior[0] == 0.10f &&
+                  cfg.datos().apariencia.fondoInferior[1] == 0.10f &&
+                  cfg.datos().apariencia.fondoInferior[2] == 0.10f,
+              "default fondoInferior = 0.1, 0.1, 0.1");
+    }
+
+    // 1b. Persistencia del proyecto activo: sin "ultimoProyecto" no se abre
+    //     ningun proyecto y el nombre queda vacio; asi guardarGeneral no
+    //     materializa un proyecto fantasma ("Nuevo Proyecto").
+    {
+        // JSON general existente pero sin ultimoProyecto: el proyecto resuelto
+        // es ninguno (vacio), no el default del struct.
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << R"({"version": 2, "idioma": "Espanol"})";
+        }
+        EditorConfig cfg;
+        cfg.cargarGeneral(rutaGeneral);
+        CHECK(cfg.datos().nombreProyecto.empty(),
+              "config sin ultimoProyecto -> sin proyecto abierto");
+
+        // Con el nombre vacio, guardarGeneral no debe escribir la clave.
+        cfg.guardarGeneral(rutaGeneral);
+        std::ifstream entrada(rutaGeneral);
+        const std::string contenido((std::istreambuf_iterator<char>(entrada)),
+                                    std::istreambuf_iterator<char>());
+        CHECK(contenido.find("ultimoProyecto") == std::string::npos,
+              "nombre vacio: guardarGeneral no escribe ultimoProyecto");
+    }
+
+    // 1c. ProyectoInicial::resolver: politica de arranque sin disco ni UI.
+    // Sin --proyecto SIEMPRE arranca en el menu (nombre vacio): el
+    // ultimoProyecto persistido NO reabre solo el editor.
+    {
+        using ProyectoInicial::resolver;
+        const auto conConfig = resolver("MiEscena", "", true);
+        CHECK(conConfig.nombre.empty(),
+              "resolver: sin --proyecto no retoma el persistido (menu)");
+        CHECK(!conConfig.primerArranque,
+              "resolver: con config no es primer arranque");
+
+        const auto sinUltimo = resolver("", "", true);
+        CHECK(sinUltimo.nombre.empty(),
+              "resolver: config sin ultimoProyecto -> sin proyecto");
+        CHECK(!sinUltimo.primerArranque,
+              "resolver: la config existe aunque falte el nombre");
+
+        const auto primer = resolver("", "", false);
+        CHECK(primer.nombre.empty(), "resolver: primer arranque sin proyecto");
+        CHECK(primer.primerArranque, "resolver: sin config es primer arranque");
+
+        const auto conCLI = resolver("MiEscena", "ProyectoCLI", false);
+        CHECK(conCLI.nombre == "ProyectoCLI",
+              "resolver: --proyecto tiene prioridad sobre el persistido");
+        CHECK(!conCLI.primerArranque,
+              "resolver: --proyecto entra directo al editor");
+    }
+
+    // 1d. Colores del cielo: se guardan y se leen tal cual quedaron, incluidos
+    // los claros (un cielo de tonos altos es una eleccion valida del usuario).
+    // Solo se acotan los valores que no pueden salir del selector y romperian
+    // el degradado: componentes fuera de [0, 1].
+    {
+        // Par claro y casi igual: antes se reseteaba al default 0.1 y el cielo
+        // perdia el color elegido (y la division, si los dos extremos caian).
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << R"({"version": 1, "apariencia": {"blancoYNegro": false, "temaClaro": false, "fondoSuperior": [0.95, 0.94, 0.94], "fondoInferior": [0.95, 0.94, 0.94]}})";
+        }
+        EditorConfig cfgClaro;
+        cfgClaro.cargarGeneral(rutaGeneral);
+        CHECK(cfgClaro.datos().apariencia.fondoSuperior[0] == 0.95f &&
+                  cfgClaro.datos().apariencia.fondoSuperior[1] == 0.94f &&
+                  cfgClaro.datos().apariencia.fondoSuperior[2] == 0.94f,
+              "cielo claro: fondoSuperior se conserva tal cual");
+        CHECK(cfgClaro.datos().apariencia.fondoInferior[0] == 0.95f &&
+                  cfgClaro.datos().apariencia.fondoInferior[1] == 0.94f &&
+                  cfgClaro.datos().apariencia.fondoInferior[2] == 0.94f,
+              "cielo claro: fondoInferior se conserva tal cual");
+
+        // Dos tonos claros distintos: la division de colores sobrevive a la carga.
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << R"({"version": 1, "apariencia": {"fondoSuperior": [0.9, 0.9, 0.95], "fondoInferior": [0.85, 0.8, 0.8]}})";
+        }
+        EditorConfig cfgClaroDistinto;
+        cfgClaroDistinto.cargarGeneral(rutaGeneral);
+        CHECK(cfgClaroDistinto.datos().apariencia.fondoSuperior[2] == 0.95f &&
+                  cfgClaroDistinto.datos().apariencia.fondoInferior[0] == 0.85f,
+              "cielo claro distinto arriba/abajo: la division se conserva");
+
+        // Fuera de [0, 1]: se acota al extremo valido en vez de descartar el color.
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << R"({"version": 1, "apariencia": {"fondoSuperior": [5.0, 1.5, -2.0], "fondoInferior": [-0.5, 9.0, 12.0]}})";
+        }
+        EditorConfig cfgFueraDeRango;
+        cfgFueraDeRango.cargarGeneral(rutaGeneral);
+        CHECK(cfgFueraDeRango.datos().apariencia.fondoSuperior[0] == 1.0f &&
+                  cfgFueraDeRango.datos().apariencia.fondoSuperior[1] == 1.0f &&
+                  cfgFueraDeRango.datos().apariencia.fondoSuperior[2] == 0.0f,
+              "cielo fuera de rango: fondoSuperior acotado a [0, 1]");
+        CHECK(cfgFueraDeRango.datos().apariencia.fondoInferior[0] == 0.0f &&
+                  cfgFueraDeRango.datos().apariencia.fondoInferior[1] == 1.0f &&
+                  cfgFueraDeRango.datos().apariencia.fondoInferior[2] == 1.0f,
+              "cielo fuera de rango: fondoInferior acotado a [0, 1]");
     }
 
     // 2. Round-trip: los valores cambiados sobreviven a guardar/cargar.
@@ -95,6 +218,7 @@ int main() {
         cfg.datos().gizmoOperacion = 2;
         cfg.datos().gizmoGlobal = true;
         cfg.datos().camaraActivaId = 7;
+        cfg.datos().dimension = DimensionProyecto::DosD;
         cfg.datos().estadoVentanas["BrowseFile"] = false;
         cfg.datos().estadoVentanas["ShowFolder"] = true;
         cfg.datos().apariencia.temaClaro = true;
@@ -103,9 +227,13 @@ int main() {
         cfg.datos().apariencia.acento[1] = 0.1f;
         cfg.datos().apariencia.acento[2] = 0.2f;
         cfg.datos().apariencia.acento[3] = 0.5f;
-        cfg.datos().apariencia.fondo[0] = 0.3f;
-        cfg.datos().apariencia.fondo[1] = 0.4f;
-        cfg.datos().apariencia.fondo[2] = 0.5f;
+        cfg.datos().apariencia.fondoSuperior[0] = 0.3f;
+        cfg.datos().apariencia.fondoSuperior[1] = 0.4f;
+        cfg.datos().apariencia.fondoSuperior[2] = 0.5f;
+        cfg.datos().apariencia.fondoInferior[0] = 0.3f;
+        cfg.datos().apariencia.fondoInferior[1] = 0.4f;
+        cfg.datos().apariencia.fondoInferior[2] = 0.5f;
+        cfg.datos().apariencia.radioDifuminado = 275.0f;
         // Guardar en dos archivos separados (nuevo flujo)
         cfg.guardarGeneral(rutaGeneral);
         cfg.guardarProyecto(proyNombreTest, rutaProyecto);
@@ -124,6 +252,8 @@ int main() {
         CHECK(cfg2.datos().gizmoOperacion == 2,           "roundtrip gizmoOperacion");
         CHECK(cfg2.datos().gizmoGlobal == true,      "roundtrip gizmo GLOBAL");
         CHECK(cfg2.datos().camaraActivaId == 7,           "roundtrip camaraActivaId");
+        CHECK(cfg2.datos().dimension == DimensionProyecto::DosD,
+              "roundtrip dimension 2D");
         CHECK(cfg2.datos().estadoVentanas.at("BrowseFile") == false,
               "roundtrip ventana BrowseFile");
         CHECK(cfg2.datos().estadoVentanas.at("ShowFolder") == true,
@@ -133,9 +263,65 @@ int main() {
         CHECK(cfg2.datos().apariencia.blancoYNegro == true,"roundtrip blancoYNegro");
         CHECK(cfg2.datos().apariencia.acento[0] == 0.9f, "roundtrip acento r");
         CHECK(cfg2.datos().apariencia.acento[3] == 0.5f, "roundtrip acento a");
-        CHECK(cfg2.datos().apariencia.fondo[2] == 0.5f,  "roundtrip fondo b");
+        CHECK(cfg2.datos().apariencia.fondoSuperior[2] == 0.5f,
+              "roundtrip fondoSuperior b");
+        CHECK(cfg2.datos().apariencia.fondoInferior[2] == 0.5f,
+              "roundtrip fondoInferior b");
+        CHECK(cfg2.datos().apariencia.radioDifuminado == 275.0f,
+              "roundtrip radio de difuminado");
         CHECK(cfg2.datos().apariencia == cfg.datos().apariencia,
               "roundtrip Apariencia completa");
+    }
+
+    // 2b. Dimension del proyecto: roundtrip 3D explicito, clave ausente e
+    //     invalida. Los proyectos previos al campo (sin "dimension") y los
+    //     valores fuera de rango se leen como 3D, la dimension con la que se
+    //     crearon todos los proyectos anteriores.
+    {
+        const std::string rutaDim = (base / "dim_proyecto.json").string();
+
+        // 3D explicito sobrevive el roundtrip.
+        {
+            EditorConfig cfg;
+            cfg.datos().dimension = DimensionProyecto::TresD;
+            cfg.guardarProyecto(proyNombreTest, rutaDim);
+            EditorConfig leido;
+            leido.cargarProyecto(proyNombreTest, rutaDim);
+            CHECK(leido.datos().dimension == DimensionProyecto::TresD,
+                  "roundtrip dimension 3D");
+        }
+
+        // Clave ausente -> 3D (retrocompatibilidad con proyectos viejos).
+        {
+            std::ofstream f(rutaDim, std::ios::trunc);
+            f << R"({"version": 2, "editor": {"camaraActivaId": 3}})";
+            EditorConfig leido;
+            leido.cargarProyecto(proyNombreTest, rutaDim);
+            CHECK(leido.datos().dimension == DimensionProyecto::TresD,
+                  "dimension ausente -> 3D");
+        }
+
+        // Valor invalido (fuera del enum) -> 3D.
+        {
+            std::ofstream f(rutaDim, std::ios::trunc);
+            f << R"({"version": 3, "editor": {"dimension": 9}})";
+            EditorConfig leido;
+            leido.cargarProyecto(proyNombreTest, rutaDim);
+            CHECK(leido.datos().dimension == DimensionProyecto::TresD,
+                  "dimension invalida -> 3D");
+        }
+
+        // El JSON persistido guarda la clave editor.dimension como entero.
+        {
+            EditorConfig cfg;
+            cfg.datos().dimension = DimensionProyecto::DosD;
+            cfg.guardarProyecto(proyNombreTest, rutaDim);
+            std::ifstream f(rutaDim);
+            std::string contenido((std::istreambuf_iterator<char>(f)),
+                                  std::istreambuf_iterator<char>());
+            CHECK(contenido.find("\"dimension\": 2") != std::string::npos,
+                  "JSON guarda editor.dimension = 2");
+        }
     }
 
     // 3. Archivo corrupto: defaults (sin crash).
@@ -146,7 +332,7 @@ int main() {
         }
         EditorConfig cfg;
         cfg.cargarGeneral(rutaGeneral);
-        CHECK(cfg.datos().nombreProyecto == "Nuevo Proyecto", "corrupto -> defaults");
+        CHECK(cfg.datos().nombreProyecto.empty(), "corrupto -> defaults");
         CHECK(cfg.datos().idioma == "Espanol", "corrupto -> defaults idioma");
     }
 
@@ -164,8 +350,123 @@ int main() {
               "parcial: campo presente se aplica");
         CHECK(cfg.datos().sensibilidadCamara == 0.15f,
               "parcial: campo ausente conserva default");
-        CHECK(cfg.datos().nombreProyecto == "Nuevo Proyecto",
-              "parcial: sin seccion general -> default");
+        CHECK(cfg.datos().nombreProyecto.empty(),
+              "parcial: sin seccion general -> proyecto no abierto");
+    }
+
+    // 4b. Radio de difuminado: un archivo sin el campo conserva el default (no
+    //     falla al cargar una configuracion anterior a la opcion) y uno con un
+    //     valor fuera del rango admitido lo acota, para que el perfil en memoria
+    //     sea siempre valido aunque el archivo se haya editado a mano.
+    {
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << "{\n  \"version\": 1,\n  \"apariencia\": {"
+                 "\"temaClaro\": true}\n}\n";
+        }
+        EditorConfig cfg;
+        cfg.cargarGeneral(rutaGeneral);
+        CHECK(cfg.datos().apariencia.radioDifuminado ==
+                  AparienciaUtil::kRadioDifuminadoPorDefecto,
+              "radio ausente -> default");
+
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << "{\n  \"version\": 1,\n  \"apariencia\": "
+                 "{\"radioDifuminado\": 99999}\n}\n";
+        }
+        EditorConfig cfgAlto;
+        cfgAlto.cargarGeneral(rutaGeneral);
+        CHECK(cfgAlto.datos().apariencia.radioDifuminado ==
+                  AparienciaUtil::kRadioDifuminadoMaximo,
+              "radio enorme -> acotado al maximo");
+
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << "{\n  \"version\": 1,\n  \"apariencia\": "
+                 "{\"radioDifuminado\": -3}\n}\n";
+        }
+        EditorConfig cfgBajo;
+        cfgBajo.cargarGeneral(rutaGeneral);
+CHECK(cfgBajo.datos().apariencia.radioDifuminado ==
+              AparienciaUtil::kRadioDifuminadoMinimo,
+              "radio negativo -> acotado al minimo");
+    }
+
+    // 4c. Colores del cielo (fondoSuperior/fondoInferior): compatibilidad con
+    //     "fondo" antiguo (se copia a ambos), modo B/N fuerza ambos a
+    //     blanco/negro segun el tema, y round-trip de colores personalizados.
+    {
+        // Compatibilidad: archivo viejo con "fondo" -> se copia a superior e inferior.
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << "{\n  \"version\": 1,\n  \"apariencia\": {"
+                 "\"fondo\": [0.1, 0.2, 0.3]}\n}\n";
+        }
+        EditorConfig cfgCompat;
+        cfgCompat.cargarGeneral(rutaGeneral);
+        CHECK(cfgCompat.datos().apariencia.fondoSuperior[0] == 0.1f &&
+                  cfgCompat.datos().apariencia.fondoSuperior[1] == 0.2f &&
+                  cfgCompat.datos().apariencia.fondoSuperior[2] == 0.3f,
+              "compat: fondo -> fondoSuperior");
+        CHECK(cfgCompat.datos().apariencia.fondoInferior[0] == 0.1f &&
+                  cfgCompat.datos().apariencia.fondoInferior[1] == 0.2f &&
+                  cfgCompat.datos().apariencia.fondoInferior[2] == 0.3f,
+              "compat: fondo -> fondoInferior");
+
+        // Modo B/N oscuro: ambos negros (en color efectivo).
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << "{\n  \"version\": 1,\n  \"apariencia\": {"
+                 "\"blancoYNegro\": true, \"temaClaro\": false,"
+                 "\"fondoSuperior\": [0.8, 0.8, 0.8],"
+                 "\"fondoInferior\": [0.2, 0.2, 0.2]}\n}\n";
+        }
+        EditorConfig cfgBNOscuro;
+        cfgBNOscuro.cargarGeneral(rutaGeneral);
+        float sup[3], inf[3];
+        AparienciaUtil::fondoEfectivoSuperior(cfgBNOscuro.datos().apariencia, sup);
+        AparienciaUtil::fondoEfectivoInferior(cfgBNOscuro.datos().apariencia, inf);
+        CHECK(sup[0] == 0.0f && inf[0] == 0.0f,
+              "B/N oscuro: color efectivo superior/inferior negros");
+
+        // Modo B/N claro: ambos blancos (en color efectivo).
+        {
+            std::ofstream f(rutaGeneral, std::ios::trunc);
+            f << "{\n  \"version\": 1,\n  \"apariencia\": {"
+                 "\"blancoYNegro\": true, \"temaClaro\": true,"
+                 "\"fondoSuperior\": [0.1, 0.1, 0.1],"
+                 "\"fondoInferior\": [0.5, 0.5, 0.5]}\n}\n";
+        }
+        EditorConfig cfgBNClaro;
+        cfgBNClaro.cargarGeneral(rutaGeneral);
+        AparienciaUtil::fondoEfectivoSuperior(cfgBNClaro.datos().apariencia, sup);
+        AparienciaUtil::fondoEfectivoInferior(cfgBNClaro.datos().apariencia, inf);
+        CHECK(sup[0] == 1.0f && inf[0] == 1.0f,
+              "B/N claro: color efectivo superior/inferior blancos");
+
+        // Colores personalizados round-trip (modo normal, no B/N).
+        {
+            EditorConfig cfgColor;
+            cfgColor.datos().apariencia.fondoSuperior[0] = 0.2f;
+            cfgColor.datos().apariencia.fondoSuperior[1] = 0.3f;
+            cfgColor.datos().apariencia.fondoSuperior[2] = 0.8f;
+            cfgColor.datos().apariencia.fondoInferior[0] = 0.8f;
+            cfgColor.datos().apariencia.fondoInferior[1] = 0.4f;
+            cfgColor.datos().apariencia.fondoInferior[2] = 0.2f;
+            cfgColor.guardarGeneral(rutaGeneral);
+
+            EditorConfig cfgColor2;
+            cfgColor2.cargarGeneral(rutaGeneral);
+            CHECK(cfgColor2.datos().apariencia.fondoSuperior[0] == 0.2f &&
+                      cfgColor2.datos().apariencia.fondoSuperior[1] == 0.3f &&
+                      cfgColor2.datos().apariencia.fondoSuperior[2] == 0.8f,
+                  "roundtrip fondoSuperior personalizado");
+            CHECK(cfgColor2.datos().apariencia.fondoInferior[0] == 0.8f &&
+                      cfgColor2.datos().apariencia.fondoInferior[1] == 0.4f &&
+                      cfgColor2.datos().apariencia.fondoInferior[2] == 0.2f,
+                  "roundtrip fondoInferior personalizado");
+        }
     }
 
     // 5. Nuevo sistema de guardado por proyecto:
@@ -195,6 +496,43 @@ int main() {
               memDir + "/ConfiguracionProyecto.json",
               "rutaConfiguracionProyecto dentro de Memory");
 
+    // 5b. Rutas que el exportador copia a la distribucion del juego standalone.
+    // El proyecto viaja COMPLETO con la disposicion del motor: el binario del
+    // juego resuelve MotorGrafico/ junto a si mismo, asi que escenas, Memory,
+    // Sonidos y src<nombre>/ tienen que quedar bajo Proyects/<nombre>/.
+    {
+        const std::string nombre = "JuegoExport";
+        const std::string salida = EditorConfig::directorioExportacion("JuegoExportado");
+        const std::vector<std::pair<std::string, std::string>> rutas =
+            rutasDatosProyecto(nombre, salida);
+
+        auto destinoDe = [&rutas](const std::string& origen) {
+            for (const auto& par : rutas)
+                if (par.first == origen) return par.second;
+            return std::string();
+        };
+
+        CHECK(destinoDe(EditorConfig::directorioProyecto(nombre)) ==
+                  salida + "/MotorGrafico/Proyects/" + nombre,
+              "el proyecto se copia completo bajo Proyects/ del juego");
+        // El material clave del juego queda cubierto por esa copia: todos sus
+        // origenes son subcarpetas del proyecto.
+        const std::string prefijo = EditorConfig::directorioProyecto(nombre) + "/";
+        for (const std::string clave :
+             {EditorConfig::directorioMemory(nombre),
+              EditorConfig::directorioSonidos(nombre),
+              EditorConfig::rutaConfiguracionProyecto(nombre)}) {
+            CHECK(clave.rfind(prefijo, 0) == 0,
+                  "el origen vive dentro del proyecto: " + clave);
+        }
+        CHECK(directorioScriptsProyecto(nombre) ==
+                  EditorConfig::directorioSrc(nombre) + "/Scripts",
+              "los fuentes de script estan en src<nombre>/Scripts");
+        CHECK(nombreProyectoDesdeRuta(EditorConfig::directorioProyecto(nombre)) ==
+                  nombre,
+              "el nombre del proyecto es el de su carpeta");
+    }
+
         CHECK(EditorConfig::rutaSceneBBDD(proyNombre) ==
               memDir + "/Binarios/SceneBBDDObjetos.txt",
               "rutaSceneBBDD dentro de Memory/Binarios");
@@ -209,19 +547,18 @@ int main() {
               "asegurarEstructuraProyecto creo Memory/Binarios/Scene");
         CHECK(fs::is_directory(srcDir),
               "asegurarEstructuraProyecto creo srcJuegoPrueba");
-        // Sonidos es un asset: vive dentro del src (raiz del explorador).
+        // Sonidos es un asset: el usuario decide cuando crearlo (no auto-creado).
         const std::string sonidosDir = EditorConfig::directorioSonidos(proyNombre);
         CHECK(sonidosDir == srcDir + "/Sonidos",
               "directorioSonidos dentro de src<proyecto>");
-        CHECK(fs::is_directory(sonidosDir),
-              "asegurarEstructuraProyecto creo src<proyecto>/Sonidos");
+        // El directorio NO se crea automaticamente: lo decide el usuario.
 
         // Limpieza de prueba
         std::error_code ec;
         fs::remove_all(proyDir, ec);
     }
 
-    // 5b. Migracion de Sonidos: la carpeta que vivia en la raiz del proyecto
+    // 5b. Migracion de Sonidos: si el usuario habia creado la carpeta en la raiz,
     //     se mueve al src conservando sus clips.
     {
         const std::string proyNombre = "JuegoMigracion";
@@ -356,6 +693,90 @@ int main() {
               "sin raiz la relativa almacenada queda como estaba");
     }
 
+    // 6c. Cotejo de prefijos del explorador contra las rutas de la
+    //     escena. ProjectPaths arma la raiz con '/' y absolutizarRuta
+    //     concatena con '/', mientras que el explorador publica la ruta con
+    //     el separador nativo (std::filesystem: '\' en Windows). Antes del
+    //     fix, mover o renombrar una carpeta devolvia 0 cambios en silencio
+    //     y las referencias de la escena quedaban apuntando al lugar viejo.
+    {
+        EditorConfig::limpiarRaizAssets();
+        const std::string raiz =
+            "C:\\base\\MotorGrafico/Proyects/JuegoX/srcJuegoX";
+        EditorConfig::fijarRaizAssets(raiz);
+
+        // Ruta en memoria tal como queda al cargar la escena.
+        const std::string enMemoria =
+            EditorConfig::absolutizarRuta("Scripts/cpp.cpp");
+        CHECK(enMemoria == raiz + "/Scripts/cpp.cpp",
+              "absolutizar concatena raiz + '/' + relativa");
+
+        // Prefijo tal como lo arma el explorador: raiz + separador nativo.
+        const std::string prefijoExplorador = raiz + "\\Scripts";
+        const std::string destino = raiz + "\\Assets\\Scripts";
+
+        const std::string reescrita = EditorConfig::reemplazarPrefijoRuta(
+            enMemoria, prefijoExplorador, destino);
+#ifdef _WIN32
+        CHECK(reescrita == destino + "/cpp.cpp",
+              "prefijo con '\\' reescribe la ruta resuelta con '/'");
+        // El prefijo con '/' (caso de 6a/6b) tiene que seguir funcionando.
+        CHECK(EditorConfig::reemplazarPrefijoRuta(enMemoria, raiz + "/Scripts",
+                                                  raiz + "/Assets/Scripts") ==
+                  raiz + "/Assets/Scripts/cpp.cpp",
+              "el prefijo con '/' no se rompe");
+        // Frontera: el prefijo cierra solo si le sigue un separador.
+        CHECK(EditorConfig::reemplazarPrefijoRuta(
+                  raiz + "/ScriptsEx/cpp.cpp", prefijoExplorador, destino)
+                  .empty(),
+              "'Scripts' no cubre 'ScriptsEx' (frontera con separadores "
+              "mixtos)");
+        // '\\' cierra el prefijo tambien en rutas con '/' puro (raiz unix).
+        CHECK(EditorConfig::reemplazarPrefijoRuta("/dato/a\\b/f.fbx", "/dato/a",
+                                                  "/dato/z") ==
+                  "/dato/z\\b/f.fbx",
+              "en Windows '\\' es separador para el cotejo");
+#else
+        CHECK(reescrita.empty(),
+              "en Linux '\\' NO es separador de rutas");
+        CHECK(EditorConfig::reemplazarPrefijoRuta("/dato/a\\b/f.fbx", "/dato/a",
+                                                  "/dato/z")
+                  .empty(),
+              "en Linux '\\' es un caracter normal de nombre");
+#endif
+        // Mayusculas y minusculas: el sistema de archivos de Windows no las
+        // distingue, asi que "assets/scripts" y "Assets/Scripts" son la misma
+        // carpeta y el cotejo tiene que reconocerlo (si no, al mover o
+        // renombrar con distinta capitalizacion la referencia de la escena se
+        // queda con la ruta vieja). En Linux SI se distinguen: "X" y "x" pueden
+        // ser dos archivos distintos, asi que ahi el cotejo es sensible.
+#ifdef _WIN32
+        CHECK(EditorConfig::reemplazarPrefijoRuta(
+                  raiz + "/assets/scripts/cpp.cpp", raiz + "/Assets/Scripts",
+                  raiz + "/Assets/Cpp")
+                  == raiz + "/Assets/Cpp/cpp.cpp",
+              "en Windows el prefijo se coteja sin distinguir mayusculas");
+        CHECK(EditorConfig::relativizarRuta(raiz + "\\ASSETS\\scripts\\a.dll") ==
+                  "ASSETS\\scripts\\a.dll",
+              "en Windows relativizar no depende de como este escrita la raiz");
+#else
+        CHECK(EditorConfig::reemplazarPrefijoRuta(
+                  raiz + "/assets/scripts/cpp.cpp", raiz + "/Assets/Scripts",
+                  raiz + "/Assets/Cpp")
+                  .empty(),
+              "en Linux el prefijo se coteja distinguiendo mayusculas");
+#endif
+
+        // Sin falsos positivos en ninguna plataforma: el prefijo tiene que
+        // cerrar en un separador (mismo contrato que 6a).
+        CHECK(EditorConfig::reemplazarPrefijoRuta(
+                  raiz + "Ab/cpp.cpp", prefijoExplorador, destino)
+                  .empty(),
+              "srcJuegoX no cubre srcJuegoXAb");
+
+        EditorConfig::limpiarRaizAssets();
+    }
+
     // Reset (Fase 3): restablecer vuelve a los defaults de fabrica.
     {
         EditorConfig cfg;
@@ -391,8 +812,8 @@ int main() {
               "restablecer vuelve el gizmo a LOCAL");
         CHECK(cfg.datos().camaraActivaId == -1,
               "restablecer vuelve la camara a automatica");
-        CHECK(cfg.datos().nombreProyecto == "Nuevo Proyecto",
-              "restablecer vuelve el nombre por defecto (main lo conserva luego)");
+        CHECK(cfg.datos().nombreProyecto.empty(),
+              "restablecer deja el proyecto sin abrir (main conserva el actual)");
         CHECK(cfg.datos().estadoVentanas.empty(),
               "restablecer limpia el estado de ventanas");
     }
@@ -489,6 +910,35 @@ int main() {
                   raizDatos + "/Proyects/" + proyecto + "/Memory/imgui.ini",
               "el imgui.ini del proyecto cuelga de directorioBase");
 
+        // Eleccion de la raiz de datos con rutas de verdad. "No escribible" se
+        // simula con una ruta debajo de un archivo regular: ahi crear carpetas
+        // falla en cualquier sistema y sin depender de permisos, que en Windows
+        // no se pueden tocar desde el test.
+        const fs::path escribible = fs::path(base) / "carpeta_valida";
+        std::error_code ecEs;
+        fs::create_directories(escribible, ecEs);
+        CHECK(!ecEs, "la carpeta escribible del test se pudo crear");
+
+        const fs::path bloqueante = fs::path(base) / "bloque";
+        {
+            std::ofstream tapon(bloqueante);
+            tapon << "soy un archivo, no una carpeta";
+        }
+        const std::string noEscribible = (bloqueante / "dentro").string();
+        const std::string noEscribible2 = (bloqueante / "otro").string();
+
+        CHECK(ProjectPathsDetalle::elegirRaizDeDatos(escribible.string(), noEscribible)
+                  == escribible.string(),
+              "si la ruta original admite escritura se usa, aunque haya alternativa");
+        CHECK(ProjectPathsDetalle::elegirRaizDeDatos(noEscribible, escribible.string())
+                  == escribible.string(),
+              "si la ruta original no admite escritura se cae a la del usuario");
+        CHECK(ProjectPathsDetalle::elegirRaizDeDatos(noEscribible, "") == noEscribible,
+              "sin carpeta de usuario se conserva la ruta historica");
+        CHECK(ProjectPathsDetalle::elegirRaizDeDatos(noEscribible, noEscribible2)
+                  == noEscribible,
+              "si ninguna de las dos sirve se conserva la ruta historica");
+
         // Migracion: nunca debe pisar datos que ya estan en destino. Se siembra
         // un archivo marcador y se comprueba que sobrevive a la llamada.
         const fs::path sembrado = fs::path(raizDatos) / "marcador_migracion.txt";
@@ -566,6 +1016,53 @@ int main() {
             (raizCopia / "destino3").string(), error3);
         CHECK(!copio3, "falla si el origen no es un directorio");
         CHECK(!error3.empty(), "deja el motivo en error");
+    }
+
+    // 9. Carpetas candidatas del log: la de la raiz de datos va primero (ya cae
+    //    a la carpeta del usuario cuando el ejecutable no admite escritura), y
+    //    la temporal del sistema es el ultimo recurso. Sin esto, instalado en
+    //    Program Files el motor se queda sin log ni consola que lo muestre.
+    {
+        const std::string exe = "/opt/FunshiEngineGL";
+        const std::string datosUsuario = "/home/usuario/.local/share/FunshiEngineGL/MotorGrafico";
+        const std::string temp = "/tmp";
+
+        const std::vector<std::string> rutas = RutasLog::candidatas(
+            datosUsuario, exe, temp);
+        CHECK(rutas.size() == 3, "tres candidatas: raiz de datos, ejecutable y temporal");
+        CHECK(rutas[0] == (fs::path(datosUsuario) / "logs").string(),
+              "la primera candidata es la raiz de datos");
+        CHECK(rutas[1] == (fs::path(exe) / "logs").string(), "la segunda, la carpeta del ejecutable");
+        CHECK(rutas[2] == (fs::path(temp) / "FunshiEngineGL" / "logs").string(),
+              "la tercera, la temporal del motor");
+
+        // Sin raiz de datos no se pierde la carpeta del ejecutable.
+        const std::vector<std::string> sinDatos = RutasLog::candidatas("", exe, temp);
+        CHECK(sinDatos.size() == 2 && sinDatos[0] == (fs::path(exe) / "logs").string(),
+              "sin raiz de datos arranca por la carpeta del ejecutable");
+
+        // Todo vacio: no hay candidatas, el arranque lo reporta como log vacio.
+        CHECK(RutasLog::candidatas("", "", "").empty(),
+              "sin ninguna ruta no hay candidatas");
+
+        // Candidatas repetidas (raiz de datos y ejecutable iguales) se unifican:
+        // el motor prueba la primera que acepte escritura, no la ultima.
+        const std::vector<std::string> repetidas =
+            RutasLog::candidatas(exe, exe, temp);
+        CHECK(repetidas.size() == 2 && repetidas[0] == (fs::path(exe) / "logs").string() &&
+                  repetidas[1] == (fs::path(temp) / "FunshiEngineGL" / "logs").string(),
+              "una ruta repetida no se prueba dos veces");
+    }
+
+    // 10. La carpeta "logs" es de la raiz de datos, no un proyecto legacy: si
+    //     no estuviera reservada, la migracion de proyectos antiguos la
+    //     arrastraba dentro de Proyects/ y el log se escribia a otro sitio del
+    //     que el motor anuncia.
+    {
+        CHECK(!ProjectPaths::esNombreValido("logs"),
+              "'logs' no es un proyecto: queda reservada en la raiz de datos");
+        CHECK(ProjectPaths::esNombreValido("Loges del Pueblo"),
+              "un nombre de proyecto corriente sigue siendo valido");
     }
 
     fs::remove_all(base);

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,13 +17,17 @@
     SPDX-License-Identifier: Apache-2.0
 */
 #include "GameScene.h"
+#include "CameraFrameSafety.h"
+#include "SiembraEscena.h"
 
 #include "../GUIManager/GUIManager.h"
 #include "../Events/EditorEventBus.h"
 #include "../GUI/SceneGUI/SceneMenuBarInterface.h"
 #include "../GUI/SceneGUI/SceneSelectedInterface.h"
+#include "../GUI/WindowNames.h"
 #include "../Objetos/Componentes/CameraComponent.h"
 #include "../Fisicas/PhysicsEngine.h"
+#include "../Fisicas/ContactoFisico.h"
 #include "../Iluminacion/LightSystem.h"
 #include "../Objetos/Componentes/Script.h"
 #include "../Objetos/Componentes/Transform.h"
@@ -31,8 +35,11 @@
 #include "../Objetos/Modelos3D.h"
 #include "../Objetos/SimpleObject.h"
 #include "../Objetos/Componentes/RigidBody/RigidBody.h"
+#include "../Objetos/Componentes/Colliders/Collider.h"
+#include "../Objetos/Componentes/Model.h"
 #include "EditorController.h"
 #include "ManifiestoAssets.h"
+#include "RutasReescritura.h"
 #include "SceneRegistry.h"
 #include "SceneSerializer.h"
 #include "../Assets/AssetManager.h"
@@ -43,20 +50,24 @@
 #include "../Rendering/RenderTarget.h"
 #include "../Rendering/SceneRenderer.h"
 #include "../Rendering/GuiaEje.h"
+#include "../Objetos/Prefab.h"
+#include "../Objetos/PrefabLibrary.h"
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MiniAudioBackend.h"
-#include "../GUI/CreadorUI/CreadorDeInterfaces.h"
-#include "../GUI/CreadorUI/CanvasInterface.h"
 #include "../Objetos/Componentes/AudioSource.h"
 #include "../Objetos/Componentes/InterfaceComponent.h"
 #include "../Configuracion/EditorConfig.h"
 #include "GizmoController.h"
+#include "InterfacesJuego.h"
+#include "../WebUI/WebUIRuntime.h"
 #include <cmath>
 #include <imgui.h>
 #include <iostream>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <chrono>
 
 // Duracion minima del overlay de carga de scripts: aunque la compilacion venga
 // de cache (instantanea) la barra se ve un instante, y al terminar deja un
@@ -85,23 +96,46 @@ GameScene::GameScene(GUIManager* manager)
       // devuelven -1), sin romper nada: los clips existen pero no suenan.
       audioEngine(
           std::make_unique<AudioEngine>(std::make_unique<MiniAudioBackend>())) {
-    selecteableGUI = managerGUI->getSelecteableGUI();
-    gizmoController_ = std::make_unique<GizmoController>(editorController.get(),
-                                                         sceneRegistry.get(),
-                                                         selecteableGUI);
-    managerGUI->bindScene(sceneRegistry.get(), editorController.get(), &events);
-    managerGUI->setAudioEngine(audioEngine.get());
+    // En modo runtime (exportación de juego) managerGUI es nullptr: no hay
+    // selecteableGUI, menuBarGUI ni gizmo. Solo se inicializa lo necesario
+    // para el juego: física, render, scripts, audio.
+    if (managerGUI) {
+        selecteableGUI = managerGUI->getSelecteableGUI();
+        gizmoController_ = std::make_unique<GizmoController>(editorController.get(),
+                                                             sceneRegistry.get(),
+                                                             selecteableGUI);
+        managerGUI->bindScene(sceneRegistry.get(), editorController.get(), &events,
+                              [this]() { return getDimensionProyecto(); });
+        managerGUI->setAudioEngine(audioEngine.get());
+    }
+    // El controlador restringe los cuerpos al plano cuando el proyecto es 2D;
+    // lee la dimension viva de la escena por este proveedor.
+    editorController->setDimensionProvider(
+        [this]() { return getDimensionProyecto(); });
     asegurarGrilla();
-    menuBarGUI = managerGUI->getMenuBarGUI(&start);
-    // El menu del editor alterna LOCAL/GLOBAL del gizmo editando este mismo
-    // bool (mismo patron que el boton play/stop con toggleBool).
-    if (menuBarGUI) menuBarGUI->setGizmoGlobal(gizmoController_->direccionGizmoGlobal());
+    configurarResolverObjetosScripts();
+    if (managerGUI) {
+        menuBarGUI = managerGUI->getMenuBarGUI(&start);
+        if (menuBarGUI) {
+            menuBarGUI->setPausa(&simulacionPausada);
+            menuBarGUI->setModoJuego(&modoJuego);
+        }
+        // El menu del editor alterna LOCAL/GLOBAL del gizmo editando este mismo
+        // bool (mismo patron que el boton play/stop con toggleBool).
+        if (menuBarGUI) menuBarGUI->setGizmoGlobal(gizmoController_->direccionGizmoGlobal());
+    }
     // El renderer resuelve la textura de cada Material con el cache de imagenes
     // de la escena (un solo decode por archivo, imagen compartida).
     sceneRenderer->setTextureManager(textureManager.get());
 }
 
 GameScene::~GameScene() {
+    ReflejoScripts::fijarResolverObjetos(nullptr);
+    ReflejoScripts::fijarResolverComponentes({});
+    eliminarSnapshotSimulacion();
+    // Descarga las vistas web vivas antes de que muera la escena (con un backend
+    // real libera sus recursos; con el nulo es no-op).
+    vistasWebUI_.vaciar();
     // Libera las geometrias cacheadas del SceneRenderer (meshes SUV + grilla)
     // si se llegaron a compilar. En el flujo normal main() crea GameScene con
     // new y no la destruye antes de glfwTerminate, asi que esto es higiene
@@ -114,15 +148,9 @@ GameScene::~GameScene() {
 void GameScene::configurarProyecto(const std::string& nombreProyecto) {
     EditorConfig::asegurarEstructuraProyecto(nombreProyecto);
     // Re-escanea Sonidos/ del proyecto: limpia el registro y lo repuebla por
-    // nombre (los widgets de AudioSource/interfaces hablan por nombre, no ruta).
+    // nombre (los widgets de AudioSource hablan por nombre, no ruta).
     clipsAudio.configurarCarpeta(EditorConfig::directorioSonidos(nombreProyecto),
                                  audioEngine.get());
-    // El creador apunta a Memory/Interfaces del nuevo proyecto.
-    if (managerGUI) {
-        CreadorDeInterfaces* creador = managerGUI->getCreadorInterfacesGUI();
-        if (creador) creador->configurarProyecto(
-            EditorConfig::directorioInterfaces(nombreProyecto));
-    }
 }
 
 AudioEngine* GameScene::getAudioEngine() const noexcept {
@@ -159,7 +187,60 @@ ListaDE<GameObject*>* GameScene::getGameObjectsScene() {
     return sceneRegistry->getGameObjects();
 }
 
+void GameScene::configurarResolverObjetosScripts() {
+    auto buscarObjeto = [this](const std::string& nombre) -> GameObject* {
+        auto* objetos = getGameObjectsScene();
+        if (!objetos || objetos->isEmpty()) return nullptr;
+        Position<GameObject*>* pos = objetos->first();
+        while (pos && pos->getElement()) {
+            if (nombre == pos->getElement()->inputName) return pos->getElement();
+            pos = (pos != objetos->last()) ? objetos->next(pos) : nullptr;
+        }
+        return nullptr;
+    };
+
+    ReflejoScripts::fijarResolverObjetos(buscarObjeto);
+
+    // Referencias a componentes (TagTipo::Componente): un campo reflejado puede
+    // apuntar al InterfaceComponent de otro objeto. El tipo se especifica por
+    // nombre; hoy solo "InterfaceComponent".
+    ReflejoScripts::fijarResolverComponentes(ReflejoScripts::ResolverComponentes{
+        [buscarObjeto](const std::string& nombre,
+                       const std::string& tipo) -> void* {
+            if (tipo != "InterfaceComponent") return nullptr;
+            GameObject* objeto = buscarObjeto(nombre);
+            return objeto
+                       ? static_cast<void*>(
+                             objeto->getComponent<InterfaceComponent>())
+                       : nullptr;
+        },
+        [this](const void* componente, const std::string& tipo) -> std::string {
+            if (tipo != "InterfaceComponent" || !componente) return std::string();
+            const auto* objetivo =
+                static_cast<const InterfaceComponent*>(componente);
+            auto* objetos = getGameObjectsScene();
+            if (!objetos || objetos->isEmpty()) return std::string();
+            Position<GameObject*>* pos = objetos->first();
+            while (pos && pos->getElement()) {
+                GameObject* o = pos->getElement();
+                if (o && o->getComponent<InterfaceComponent>() == objetivo)
+                    return o->inputName;
+                pos = (pos != objetos->last()) ? objetos->next(pos) : nullptr;
+            }
+            return std::string();
+        }});
+}
+
+void GameScene::configurarResolverObjetosEditor() {
+    // Mismo resolver que en play mode, pero disponible en editor para
+    // serializacion/deserializacion y drag&drop de GameObjects en scripts.
+    configurarResolverObjetosScripts();
+}
+
 void GameScene::asegurarGrilla() {
+    // La grilla de rejilla es un auxiliar del mundo 3D: un proyecto 2D juega
+    // sobre el plano XY y no se siembra.
+    if (!SiembraEscena::sembrarGrilla(dimensionProyecto)) return;
     if (!sceneRegistry || !editorController) return;
     auto* lista = getGameObjectsScene();
 
@@ -216,10 +297,171 @@ void GameScene::saveScene(const std::string& filename) {
 
 bool GameScene::isStart() { return start; }
 
-// La maquina de estados (orquestador) es la fuente de verdad de la simulacion:
-// EditorInput la refleja aca en el path de F5/F7 (F5 -> true, F7 -> false),
-// comparte flag con el boton Activar/Detener del menu de escena.
+// La maquina de estados (orquestador) es la fuente de verdad de la simulacion;
+// main refleja su decision aca al inicio de cada frame.
 void GameScene::setStart(bool activo) noexcept { start = activo; }
+
+void GameScene::setModoJuego(bool juego) noexcept { modoJuego = juego; }
+
+void GameScene::solicitarResetSimulacion() noexcept {
+    if (start) resetSimulacionPendiente = true;
+}
+
+void GameScene::cerrarSimulacionAntesDeGuardar() {
+    resetSimulacionPendiente = false;
+    if (!previousStart) {
+        start = false;
+        eliminarSnapshotSimulacion();
+        return;
+    }
+    start = false;
+    simulacionPausada = false;
+    update(0.0f);
+}
+
+bool GameScene::isModoJuego() const noexcept { return modoJuego; }
+
+bool GameScene::isEditorGUIVisible() const noexcept { return menuActivo; }
+
+bool GameScene::guardarSnapshotSimulacion() {
+    eliminarSnapshotSimulacion();
+    if (!sceneSerializer || directorioEscena_.empty()) return false;
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto marca = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path base = fs::path(directorioEscena_).parent_path();
+    for (unsigned int intento = 0; intento < 32; ++intento) {
+        const fs::path candidato =
+            base / (".funshi-simulation-" + std::to_string(marca) + "-" +
+                    std::to_string(intento));
+        ec.clear();
+        if (!fs::create_directory(candidato, ec)) {
+            if (ec) return false;
+            continue;
+        }
+        ec.clear();
+        if (!fs::create_directory(candidato / "Scene", ec) || ec) {
+            fs::remove_all(candidato, ec);
+            return false;
+        }
+        directorioSnapshot_ = candidato.string();
+        indiceSnapshot_ = (candidato / "SceneBBDDObjetos.txt").string();
+        break;
+    }
+    if (directorioSnapshot_.empty()) return false;
+
+    camaraActivaAlIniciar = getActiveCameraId();
+    sceneSerializer->save((fs::path(directorioSnapshot_) / "Scene").string());
+    if (!snapshotSimulacionDisponible()) {
+        std::cerr << "[escena] no se pudo crear el estado inicial de la "
+                     "simulacion; Reset y la restauracion al terminar no "
+                     "estaran disponibles\n";
+        eliminarSnapshotSimulacion();
+        return false;
+    }
+    return true;
+}
+
+bool GameScene::snapshotSimulacionDisponible() const {
+    if (indiceSnapshot_.empty() || directorioSnapshot_.empty()) return false;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path indicePath(indiceSnapshot_);
+    if (!fs::is_regular_file(indicePath, ec) || ec ||
+        fs::file_size(indicePath, ec) == 0 || ec)
+        return false;
+
+    const fs::path raizBinaria =
+        fs::path(directorioSnapshot_) / "Scene" / "ObjectN0.db";
+    ec.clear();
+    if (!fs::is_regular_file(raizBinaria, ec) || ec ||
+        fs::file_size(raizBinaria, ec) == 0 || ec)
+        return false;
+
+    std::ifstream indice(indiceSnapshot_, std::ios::binary);
+    if (!indice.is_open()) return false;
+    std::string nombreObjeto;
+    while (std::getline(indice, nombreObjeto)) {
+        if (!nombreObjeto.empty() && nombreObjeto.back() == '\r')
+            nombreObjeto.pop_back();
+        if (nombreObjeto.empty() || nombreObjeto == "=>" ||
+            nombreObjeto == "<=")
+            continue;
+        const fs::path binario =
+            fs::path(directorioSnapshot_) / "Scene" / nombreObjeto;
+        ec.clear();
+        if (!fs::is_regular_file(binario, ec) || ec ||
+            fs::file_size(binario, ec) == 0 || ec)
+            return false;
+    }
+    return !indice.bad() && indice.eof();
+}
+
+bool GameScene::restaurarSnapshotSimulacion() {
+    if (!sceneSerializer || !snapshotSimulacionDisponible()) return false;
+
+    sceneSerializer->load(indiceSnapshot_,
+                          (std::filesystem::path(directorioSnapshot_) / "Scene")
+                              .string());
+    if (editorController) editorController->registerSceneRigidBodies();
+    if (selecteableGUI) {
+        selecteableGUI->bindScene(sceneRegistry.get(), editorController.get(),
+                                   &events);
+        selecteableGUI->setReturnableEntity(nullptr);
+    }
+    if (managerGUI) managerGUI->removeSettingsGUI();
+    requestedActiveCamera = nullptr;
+    activeCameraObject = nullptr;
+    activeCamera = nullptr;
+    contadorCamaras = 0;
+    setActiveCameraById(camaraActivaAlIniciar);
+    getGameObjectsScene();
+    return true;
+}
+
+void GameScene::eliminarSnapshotSimulacion() noexcept {
+    if (directorioSnapshot_.empty()) return;
+    std::error_code ec;
+    std::filesystem::remove_all(directorioSnapshot_, ec);
+    if (ec) {
+        std::cerr << "[escena] no se pudo retirar el estado temporal de la "
+                     "simulacion: " << ec.message() << '\n';
+    }
+    directorioSnapshot_.clear();
+    indiceSnapshot_.clear();
+}
+
+void GameScene::limpiarRuntimeSimulacion() {
+    limpiarColaCompilacion();
+    auto* gameObjects = getGameObjectsScene();
+    if (gameObjects && !gameObjects->isEmpty()) {
+        Position<GameObject*>* pos = gameObjects->first();
+        while (pos && pos->getElement()) {
+            ListaDE<Component*>* componentes =
+                pos->getElement()->getComponents();
+            if (componentes && !componentes->isEmpty()) {
+                Position<Component*>* componente = componentes->first();
+                while (componente) {
+                    if (Script* script =
+                            dynamic_cast<Script*>(componente->getElement()))
+                        script->detener(pos->getElement());
+                    componente = componente != componentes->last()
+                                     ? componentes->next(componente)
+                                     : nullptr;
+                }
+            }
+            pos = (pos != gameObjects->last()) ? gameObjects->next(pos) : nullptr;
+        }
+    }
+    sincronizarAudioPlay(false);
+    MotorScript::inyectarServiciosScript(nullptr, nullptr, nullptr);
+    inputScripts.reset();
+    // Limpia el estado JSON de las interfaces y descarga sus vistas para que
+    // una nueva partida no arrastre datos de la anterior.
+    estadoInterfaces_.vaciar();
+    vistasWebUI_.vaciar();
+}
 
 bool GameScene::isSimulacionPausada() const noexcept { return simulacionPausada; }
 
@@ -230,8 +472,16 @@ void GameScene::setSimulacionPausada(bool pausada) noexcept {
 }
 
 void GameScene::loadScene(const std::string& pathTxt, const std::string& semiPath) {
+    directorioEscena_ = semiPath;
     if (sceneSerializer) {
         sceneSerializer->load(pathTxt, semiPath);
+        // La carga limpia la escena y reconstruye los objetos: los punteros
+        // cacheados de camara apuntarian a memoria liberada (heap-use-after-free
+        // al cambiar de proyecto). Se olvidan aqui; setActiveCameraById o
+        // getActiveCamera los resuelven de nuevo sobre la escena cargada.
+        requestedActiveCamera = nullptr;
+        activeCameraObject = nullptr;
+        activeCamera = nullptr;
         // Los RigidBody deserializados nunca pasan por EditorController: la
         // malla se carga despues de los componentes (shape provisional) y el
         // cuerpo no se registra en el mundo. Aqui se reconstruye la shape con
@@ -250,15 +500,38 @@ void GameScene::loadScene(const std::string& pathTxt, const std::string& semiPat
         // El pathTxt es <prefijo>BBDDObjetos.txt; el manifiesto comparte el
         // prefijo con nombre SceneAssets.json.
         const std::string sufijoBBDD = "BBDDObjetos.txt";
+        std::string prefijoEscena; // vacio si el path no tiene ese formato
         if (pathTxt.size() >= sufijoBBDD.size() &&
             pathTxt.compare(pathTxt.size() - sufijoBBDD.size(),
                             sufijoBBDD.size(), sufijoBBDD) == 0) {
-            const std::string prefijo =
+            prefijoEscena =
                 pathTxt.substr(0, pathTxt.size() - sufijoBBDD.size());
-            ManifiestoAssets::cargar(prefijo + "SceneAssets.json",
+            ManifiestoAssets::cargar(prefijoEscena + "SceneAssets.json",
                                      getGameObjectsScene());
         }
+
+        // Sanado de referencias rotas: escenas guardadas con un asset que ya
+        // no existe en esa ruta (archivos movidos o renombrados fuera del
+        // motor, o daño de un guardado anterior). Con una unica coincidencia
+        // del nombre bajo la raiz de assets la referencia se repara y queda
+        // registrada en el log; con varias o con ninguna no se adivina. Como
+        // la reparacion vive solo en memoria, si algo cambio se persiste ya por
+        // el mismo camino que la reescritura de un move: si no, cada apertura
+        // tendria que sanar otra vez y el manifiesto seguiria reflejando la
+        // ruta vieja.
+        const int reparadas =
+            RutasReescritura::sanarRutasInexistentes(getGameObjectsScene());
+        if (reparadas > 0 && !prefijoEscena.empty()) {
+            std::cerr << "[escena] " << reparadas
+                      << " referencias de asset reparadas al cargar; se guarda "
+                         "la escena con las rutas sanadas\n";
+            saveScene(prefijoEscena);
+        }
     }
+    // Configurar resolver para modo editor: permite resolver referencias a
+    // GameObjects por nombre durante serializacion/deserializacion y drag&drop
+    // de GameObjects en scripts (inspector) mientras se edita.
+    configurarResolverObjetosEditor();
 }
 
 CameraComponent* GameScene::getActiveCamera() {
@@ -312,8 +585,21 @@ CameraComponent* GameScene::getActiveCamera() {
                           "CamaraPrincipal");
             creada->addComponent(std::make_unique<Transform>());
             Transform* transform = creada->getComponent<Transform>();
-            if (transform) transform->setTranslatef(0.f, 8.f, 40.f);
+            if (transform) {
+                const SiembraEscena::PosicionInicial pos =
+                    SiembraEscena::posicionCamaraInicial(dimensionProyecto);
+                transform->setTranslatef(pos.x, pos.y, pos.z);
+            }
             creada->addComponent(std::make_unique<CameraComponent>());
+            // En un proyecto 2D la camara sembrada mira el plano XY de frente:
+            // nace ortografica (vista de plano), no en perspectiva.
+            if (dimensionProyecto == DimensionProyecto::DosD) {
+                if (CameraComponent* camaraNueva =
+                        creada->getComponent<CameraComponent>()) {
+                    camaraNueva->setProjection(
+                        CameraComponent::Projection::Orthographic);
+                }
+            }
             return getActiveCamera();
         }
     }
@@ -321,6 +607,14 @@ CameraComponent* GameScene::getActiveCamera() {
     activeCamera = nullptr;
     activeCameraObject = nullptr;
     return nullptr;
+}
+
+void GameScene::setDimension(DimensionProyecto dimension) noexcept {
+    dimensionProyecto = dimension;
+}
+
+DimensionProyecto GameScene::getDimensionProyecto() const noexcept {
+    return dimensionProyecto;
 }
 
 void GameScene::setActiveCamera(GameObject* object) {
@@ -333,11 +627,22 @@ void GameScene::setActiveCamera(GameObject* object) {
 }
 
 int GameScene::getActiveCameraId() const noexcept {
-    return requestedActiveCamera ? requestedActiveCamera->getId() : -1;
+    // El pedido puede quedar colgando si la escena se limpio por otro camino
+    // (p. ej. cambio de proyecto): contains() solo compara direcciones, sin
+    // desreferenciar, igual que hace getActiveCamera().
+    if (!requestedActiveCamera || !sceneRegistry ||
+        !sceneRegistry->contains(requestedActiveCamera))
+        return -1;
+    return requestedActiveCamera->getId();
 }
 
 void GameScene::setActiveCameraById(int id) {
-    if (id < 0 || !sceneRegistry) return;
+    // Id automatico (-1) o sin escena: modo automatico, sin camara pedida (si
+    // quedaba una de otro proyecto, se olvida aqui en vez de colgar).
+    if (id < 0 || !sceneRegistry) {
+        requestedActiveCamera = nullptr;
+        return;
+    }
 
     auto* gameObjects = getGameObjectsScene();
     if (!gameObjects || gameObjects->isEmpty()) return;
@@ -351,7 +656,9 @@ void GameScene::setActiveCameraById(int id) {
         }
         pos = (pos != gameObjects->last()) ? gameObjects->next(pos) : nullptr;
     }
-    // No se encontro la camara persistida: se deja el modo automatico.
+    // No se encontro la camara persistida: se deja el modo automatico,
+    // olvidando cualquier pedido anterior (puede ser de otro proyecto).
+    requestedActiveCamera = nullptr;
 }
 
 GameObject* GameScene::agregarCamaraEnVistaActiva() {
@@ -416,58 +723,165 @@ GameObject* GameScene::agregarCamaraEnVistaActiva() {
 }
 
 void GameScene::GUI() {
+    // En modo runtime (juego exportado sin editor), no hay GUI del editor
+    if (!managerGUI) return;
+    
     auto* gameObjects = getGameObjectsScene();
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, menuActivo ? 1.0f : 0.0f);
+    ImGui::BeginDisabled(!menuActivo);
+    ImGui::BeginDisabled(modoJuego);
     selecteableGUI->printGUI();
     if (gameObjects->isElement(selecteableGUI->getReturnableEntity())) {
-        managerGUI->getSettingGUI(selecteableGUI->getReturnableEntity())->printGUI();
+        SettingsObjectInterface* settings =
+            managerGUI->getSettingGUI(selecteableGUI->getReturnableEntity());
+        if (settings) {
+            settings->setMostrarVisualesDepuracion(!modoJuego);
+            settings->printGUI();
+        }
     }
     pintarViewportsGUI();
-    menuBarGUI->printGUI();
     pintarVentanaCamaras();
+    pintarVistaInterfaz();
     if (managerGUI) managerGUI->getStatusBarGUI()->printGUI();
-    if (menuBarGUI->getCargarScripts()) {
-        menuBarGUI->setCargarScripts(false);
+    ImGui::EndDisabled();
+    menuBarGUI->printGUI();
+    if (TerminalInterface* terminal = managerGUI->getTerminalGUI())
+        terminal->printGUI();
+    // El overlay de las interfaces de juego (HUD) se dibuja aparte en
+    // pintarInterfacesJuego(), porque tambien corre en el juego exportado,
+    // donde no existe la GUI del editor.
+    ImGui::EndDisabled();
+    ImGui::PopStyleVar();
+}
+
+void GameScene::pintarInterfacesJuego() {
+    // Recoleccion de TODAS las interfaces activas de la escena, ordenadas por z,
+    // tambien en el juego exportado (sin GUI del editor): una escena con varias
+    // no debe ocultar las demas.
+    std::vector<InterfaceComponent*> interfaces =
+        InterfacesJuego::recolectarDeEscena(getGameObjectsScene());
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const int ancho = static_cast<int>(io.DisplaySize.x);
+    const int alto = static_cast<int>(io.DisplaySize.y);
+
+    // Ciclo de vida de las vistas: carga las nuevas, ajusta el area al
+    // contenedor, avanza (actualizar + render) las existentes y descarga las que
+    // ya no estan. Lo hace el runtime web; con el backend nulo no hay motor web
+    // y no se dibuja nada, pero el ciclo corre entero.
+    vistasWebUI_.sincronizar(interfaces, ancho, alto, deltaTime,
+                             &estadoInterfaces_);
+
+    // Composicion del frame: cada vista que ya entrega textura se dibuja sobre
+    // la escena con su handle opaco. La colocacion es provisional (centrada en
+    // el viewport + desplazamiento); el sistema completo de ancla/tamano/z lo
+    // resuelve el lienzo de juego.
+    ImDrawList* dibujo = ImGui::GetForegroundDrawList();
+    for (InterfaceComponent* interfaz : interfaces) {
+        const VistaWebUI* vista = vistasWebUI_.buscar(interfaz);
+        if (!vista || !vista->handleImGui || vista->ancho <= 0 ||
+            vista->alto <= 0)
+            continue;
+        const glm::vec2 desplazamiento = interfaz->getDesplazamiento();
+        const float x =
+            (io.DisplaySize.x - static_cast<float>(vista->ancho)) * 0.5f +
+            desplazamiento.x;
+        const float y = (io.DisplaySize.y - static_cast<float>(vista->alto)) * 0.5f
+                        + desplazamiento.y;
+        dibujo->AddImage(vista->handleImGui, ImVec2(x, y),
+                         ImVec2(x + vista->ancho, y + vista->alto));
+    }
+}
+
+void GameScene::pintarVistaInterfaz() {
+    GameObject* seleccionado =
+        editorController ? editorController->getSelectedObject() : nullptr;
+    InterfaceComponent* interfaz =
+        seleccionado ? seleccionado->getComponent<InterfaceComponent>() : nullptr;
+    if (!seleccionado || !interfaz || interfaz->getRutaHtml().empty()) return;
+
+    // Sincronizar la vista del objeto seleccionado para el preview del editor,
+    // de modo que la textura web este disponible en la ventana dockable.
+    const ImGuiIO& io = ImGui::GetIO();
+    std::vector<InterfaceComponent*> uno{interfaz};
+    vistasWebUI_.sincronizar(uno,
+                             static_cast<int>(io.DisplaySize.x),
+                             static_cast<int>(io.DisplaySize.y),
+                             deltaTime,
+                             nullptr);
+
+    if (!ImGui::Begin(WindowNames::VistaInterfaz)) {
+        ImGui::End();
+        return;
     }
 
-    // Sistema de audio + creador de interfaces: el catalogo de clips se
-    // refresca por frame (tolerante y barato), el canvas refleja la interfaz
-    // activa y cambia su presentacion segun el modo play.
-    if (managerGUI) {
-        CreadorDeInterfaces* creador = managerGUI->getCreadorInterfacesGUI();
-        CanvasInterface* canvas = managerGUI->getCanvasGUI();
-        if (creador) {
-            creador->setClipNames(audioEngine->nombresClips());
-            creador->printGUI();
-        }
-        if (canvas) {
-            canvas->setAudioEngine(audioEngine.get());
-            canvas->setModoPlay(start);
-            UserInterfaceCustom* uiParaCanvas = nullptr;
-            if (start && creador) {
-                // En modo play: buscar objeto con InterfaceComponent y activar
-                // su interfaz a pantalla completa (HUD del juego).
-                auto* objs = getGameObjectsScene();
-                if (objs && !objs->isEmpty()) {
-                    Position<GameObject*>* pos = objs->first();
-                    while (pos && pos->getElement()) {
-                        if (auto* ic =
-                                pos->getElement()->getComponent<InterfaceComponent>()) {
-                            const std::string& nombre = ic->getInterfaz();
-                            if (!nombre.empty())
-                                uiParaCanvas = creador->activarInterfaz(nombre);
-                            break; // la primera gana
-                        }
-                        pos = (pos != objs->last()) ? objs->next(pos) : nullptr;
-                    }
-                }
-            } else if (creador) {
-                // En editor: usar la interfaz activa del creador (prueba manual).
-                uiParaCanvas = creador->getInterfazActiva();
-            }
-            canvas->setUI(uiParaCanvas);
-            canvas->printGUI();
-        }
+    const VistaWebUI* vistaSoloLectura = vistasWebUI_.buscar(interfaz);
+    if (!vistaSoloLectura || !vistaSoloLectura->cargada) {
+        ImGui::Text("Cargando %s ...", interfaz->getRutaHtml().c_str());
+        ImGui::End();
+        return;
     }
+    if (!vistaSoloLectura->error.empty()) {
+        ImGui::Text("Error: %s", vistaSoloLectura->error.c_str());
+        ImGui::End();
+        return;
+    }
+    if (!vistaSoloLectura->handleImGui || vistaSoloLectura->ancho <= 0 ||
+        vistaSoloLectura->alto <= 0) {
+        ImGui::Text("Esperando textura del motor web (%s)...",
+                    interfaz->getRutaHtml().c_str());
+        ImGui::End();
+        return;
+    }
+    const int anchoVista = vistaSoloLectura->ancho;
+    const int altoVista = vistaSoloLectura->alto;
+    void* texturaImGui = vistaSoloLectura->handleImGui;
+
+    const float anchoDisponible = ImGui::GetContentRegionAvail().x;
+    const float escala =
+        anchoDisponible > 0 ? anchoDisponible / static_cast<float>(anchoVista)
+                            : 1.0f;
+    const ImVec2 tamano(anchoDisponible > 0 ? anchoDisponible
+                                            : static_cast<float>(anchoVista),
+                        static_cast<float>(altoVista) * escala);
+    const ImVec2 origen = ImGui::GetCursorScreenPos();
+    ImGui::Image(static_cast<ImTextureID>(
+                     reinterpret_cast<std::intptr_t>(texturaImGui)),
+                 tamano);
+
+    // Input local: el clic/rueda sobre la preview se reenvia a la vista en sus
+    // coordenadas (origen arriba-izquierda). El foco sigue al raton: entrar en
+    // la imagen activa la vista, salir la desactiva.
+    VistaWebUI* vista = vistasWebUI_.buscar(interfaz);
+    if (!vista) {
+        ImGui::End();
+        return;
+    }
+    if (ImGui::IsItemHovered()) {
+        const ImVec2 raton = ImGui::GetIO().MousePos;
+        const int lx = static_cast<int>((raton.x - origen.x) / escala);
+        const int ly = static_cast<int>((raton.y - origen.y) / escala);
+        WebUIRuntime::foco(*vista, true);
+        WebUIRuntime::ratonMover(*vista, lx, ly);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            WebUIRuntime::ratonBoton(*vista, 0, true);
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+            WebUIRuntime::ratonBoton(*vista, 0, false);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            WebUIRuntime::ratonBoton(*vista, 1, true);
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+            WebUIRuntime::ratonBoton(*vista, 1, false);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+            WebUIRuntime::ratonBoton(*vista, 2, true);
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Middle))
+            WebUIRuntime::ratonBoton(*vista, 2, false);
+        const float rueda = ImGui::GetIO().MouseWheel;
+        if (rueda != 0.0f) WebUIRuntime::ratonRueda(*vista, rueda);
+    } else if (ImGui::IsItemDeactivated()) {
+        WebUIRuntime::foco(*vista, false);
+    }
+
+    ImGui::End();
 }
 
 void GameScene::pintarViewportsGUI() {
@@ -507,6 +921,44 @@ void GameScene::pintarViewportsGUI() {
             ImVec2(static_cast<float>(target->getWidth()),
                    static_cast<float>(target->getHeight())),
             ImVec2(0.f, 1.f), ImVec2(1.f, 0.f));
+
+        // Drag & drop: .prefab -> instanciar; .obj -> crear objeto con Model
+        // Usa InvisibleButton superpuesto para crear zona de drop válida
+        ImGui::InvisibleButton(("##ViewportDropTarget" + std::to_string(index)).c_str(),
+                               ImVec2(static_cast<float>(target->getWidth()),
+                                      static_cast<float>(target->getHeight())));
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ARCHIVO_PATH")) {
+                const char* path = static_cast<const char*>(payload->Data);
+                if (path && editorController) {
+                    std::string pathStr(path);
+                    std::cout << "[DEBUG Viewport] Drag-drop received: " << pathStr << std::endl;
+                    if (pathStr.size() >= 7 && pathStr.substr(pathStr.size() - 7) == ".prefab") {
+                        // Instanciar prefab
+                        std::string nombre = std::filesystem::path(pathStr).stem().string();
+                        if (auto* prefabLib = editorController->getPrefabLibrary()) {
+                            if (Prefab* prefab = prefabLib->obtener(nombre)) {
+                                GameObject* instancia = prefab->instanciar(editorController.get(), nullptr);
+                                if (instancia) editorController->selectObject(instancia);
+                            }
+                        }
+                    } else if (pathStr.size() >= 4 && pathStr.substr(pathStr.size() - 4) == ".obj") {
+                        // Crear objeto con Model component
+                        auto obj = std::make_unique<SimpleObject>();
+                        std::string nombre = std::filesystem::path(pathStr).stem().string();
+                        std::snprintf(obj->inputName, sizeof(obj->inputName), "%s", nombre.c_str());
+                        GameObject* creado = editorController->createGameObject(std::move(obj), nullptr);
+                        if (creado) {
+                            auto* model = new Model();
+                            model->setPath(pathStr);
+                            creado->addComponent(std::unique_ptr<Component>(model));
+                            editorController->selectObject(creado);
+                        }
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
         ImGui::End();
     }
 }
@@ -516,7 +968,7 @@ void GameScene::pintarViewportsGUI() {
 // eliminar. Ventana de inicio de la Fase 2: con "Agregar camara" aparece
 // automaticamente la vista previa de cada camara.
 void GameScene::pintarVentanaCamaras() {
-    if (!ImGui::Begin("Camaras", &ventanaCamarasAbierta)) {
+    if (!ImGui::Begin(WindowNames::CameraList, &ventanaCamarasAbierta)) {
         ImGui::End();
         return;
     }
@@ -587,6 +1039,25 @@ void GameScene::pintarVentanaCamaras() {
 
 void GameScene::update(float value) {
     deltaTime = value;
+    if (resetSimulacionPendiente && start) {
+        resetSimulacionPendiente = false;
+        if (!snapshotSimulacionDisponible()) {
+            std::cerr << "[escena] no se pudo restaurar el estado inicial de "
+                         "la simulacion; la ejecucion continua sin cambios\n";
+            inputScripts.avanzarFrame();
+            return;
+        }
+        limpiarRuntimeSimulacion();
+        if (restaurarSnapshotSimulacion()) {
+            previousStart = false;
+            std::cout << "[escena] simulacion restaurada al estado inicial\n";
+        } else {
+            std::cerr << "[escena] no se pudo restaurar el estado inicial de "
+                         "la simulacion\n";
+        }
+        inputScripts.avanzarFrame();
+        return;
+    }
     // Mientras se manipula el gizmo NO se avanza la simulacion: de lo
     // contrario la gravedad/contactos eyectan el cuerpo y la sync de vuelta
     // arrastra al objeto (efecto 'sale disparado'). Al soltar, la sim sigue.
@@ -594,13 +1065,20 @@ void GameScene::update(float value) {
     // stepSimulation no tiene consumidor (syncPhysicsToGameObject no escribe),
     // y solo causa explosiones por penetracion con el suelo (plano y=-1).
 
-    // Transicion editor->play: el cuerpo fue creado en una pose PASADA (al
+    // Transicion editor->simulacion: el cuerpo fue creado en una pose PASADA (al
     // agregar el RigidBody o al ultimo sync). Mientras estuvo en pausa el
     // usuario pudo mover el objeto o el offset del collider; si el primer
     // stepSimulation corre con el body viejo, la sync de vuelta escribe la
     // pose del collider desde una posicion descartada. Se empuja el body a
     // la pose VISUAL actual antes de arrancar.
     if (start && !previousStart) {
+        inputScripts.reset();
+        if (directorioSnapshot_.empty()) guardarSnapshotSimulacion();
+        // El undo guarda ids de edicion: al entrar en play la escena puede
+        // mutar y al salir se restaura el snapshot (los ids caducan). Sin
+        // limpiar, un Ctrl+Z posterior operaria sobre objetos ajenos.
+        if (editorController && editorController->getGestorComandos())
+            editorController->getGestorComandos()->limpiar();
         // Feedback visual inmediato: aunque no haya nada que recompilar, se ve
         // que "Activar" disparo la carga/verificacion de scripts.
         overlayProgresoVisible_ = true;
@@ -609,20 +1087,6 @@ void GameScene::update(float value) {
         // Los campos de SerializeField que referencian GameObjects se guardan
         // por nombre; aca se configura el resolver hacia los objetos de ESTA
         // escena (valido mientras se construye el arbol de valores).
-        ReflejoScripts::fijarResolverObjetos(
-            [this](const std::string& nombre) -> GameObject* {
-                auto* objetos = getGameObjectsScene();
-                if (objetos->isEmpty()) return nullptr;
-                Position<GameObject*>* pos = objetos->first();
-                while (pos && pos->getElement()) {
-                    if (nombre == pos->getElement()->inputName)
-                        return pos->getElement();
-                    pos = (pos != objetos->last()) ? objetos->next(pos)
-                                                   : nullptr;
-                }
-                return nullptr;
-            });
-
         auto* gameObjects = getGameObjectsScene();
         if (!gameObjects->isEmpty()) {
             Position<GameObject*>* pos = gameObjects->first();
@@ -641,42 +1105,68 @@ void GameScene::update(float value) {
         // Scripts: cablear los servicios de escena (audio, busqueda, teclado)
         // a la tabla que consultan los comportamientos via `servicios->...`.
         MotorScript::inyectarServiciosScript(audioEngine.get(),
-                                             sceneRegistry.get(),
-                                             &inputScripts);
+                                              sceneRegistry.get(),
+                                              &inputScripts, phisics.get(),
+                                              editorController.get(),
+                                              &estadoInterfaces_);
 
         // Todos los scripts que necesitan (re)compilarse entran a la cola: su
         // progreso se ve en la barra "Estado" antes de bloquear con g++/javac.
         encolarScriptsIniciales();
+
+        std::cout << "[escena] simulacion iniciada: audio, servicios de "
+                     "scripts y cola de compilacion armados"
+                  << std::endl;
     }
 
-    // Transicion play->editor: avisar a los scripts para que hagan limpieza
-    // (onStop) y conservar los valores editados en play mode para la GUI.
+    // Al terminar: avisar a los scripts para que hagan limpieza (onStop) y
+    // restaurar el estado previo a cualquiera de los modos de simulacion.
     if (previousStart && !start) {
-        limpiarColaCompilacion();
-        // Scripts: desconectar los servicios (los comportamientos deben
-        // tolerar servicios == nullptr / tablas inoperativas al salir).
-        MotorScript::inyectarServiciosScript(nullptr, nullptr, nullptr);
-        // Audio: detener los AudioSource (no dejar sonando en el editor).
-        sincronizarAudioPlay(false);
-        auto* gameObjects = getGameObjectsScene();
-        if (!gameObjects->isEmpty()) {
-            Position<GameObject*>* pos = gameObjects->first();
-            while (pos && pos->getElement()) {
-                if (Script* script =
-                        pos->getElement()->getComponent<Script>())
-                    script->detener(pos->getElement());
-                pos = (pos != gameObjects->last()) ? gameObjects->next(pos)
-                                                   : nullptr;
-            }
+        limpiarRuntimeSimulacion();
+        if (!restaurarSnapshotSimulacion()) {
+            std::cerr << "[escena] no se pudo restaurar el estado inicial "
+                         "al terminar la simulacion\n";
         }
+        eliminarSnapshotSimulacion();
+        // Como al entrar: la restauracion reasigna el mundo y los ids
+        // guardados en el historial ya no corresponden.
+        if (editorController && editorController->getGestorComandos())
+            editorController->getGestorComandos()->limpiar();
+
+        std::cout << "[escena] simulacion detenida: audio cortado, servicios "
+                     "desconectados y scripts avisados con onStop"
+                  << std::endl;
     }
     previousStart = start;
 
     // La fisica y los scripts SOLO avanzan en modo play (start==true) y sin
     // pausa (F6): con simulacionPausada congelada se congela el motor pero la
     // GUI/editor sigue, para reanudar desde el mismo frame.
-    if (phisics && start && !gizmoInUse() && !simulacionPausada)
+    if (phisics && start && !gizmoInUse() && !simulacionPausada) {
         phisics->stepSimulation(value);
+        const auto notificar = [](Collider* propio, Collider* otro,
+                                  TipoContacto tipo) {
+            if (!propio || !otro) return;
+            GameObject* owner = propio->getOwner();
+            ListaDE<Component*>* componentes =
+                owner ? owner->getComponents() : nullptr;
+            if (!componentes || componentes->isEmpty()) return;
+            Position<Component*>* componente = componentes->first();
+            while (componente) {
+                if (Script* script =
+                        dynamic_cast<Script*>(componente->getElement()))
+                    script->notificarContacto(owner, propio, otro, tipo);
+                componente =
+                    componente != componentes->last()
+                        ? componentes->next(componente)
+                        : nullptr;
+            }
+        };
+        for (const EventoContacto& evento : phisics->tomarEventosContacto()) {
+            notificar(evento.colliderA, evento.colliderB, evento.tipo);
+            notificar(evento.colliderB, evento.colliderA, evento.tipo);
+        }
+    }
 
     // Sincronizar la fisica de vuelta a los GameObjects del mundo
     // (GameObject::update escribe en los Transforms via RigidBody).
@@ -691,6 +1181,9 @@ void GameScene::update(float value) {
                                                    : nullptr;
             }
         }
+        // Altas/bajas de objetos pedidas por scripts: tras el recorrido (crear
+        // o borrar adentro reconstruiria la vista e invalidaria el iterador).
+        MotorScript::procesarPeticionesObjetos();
     }
 
     // Overlay de carga de scripts: mientras hay trabajo en cola se mantiene
@@ -726,6 +1219,15 @@ void GameScene::update(float value) {
             compilacionEnCurso_, cargaActual_, cargaHecha_, cargaTotal_,
             resultadosCarga_, overlayProgresoVisible_,
             overlayResultadoVisible_);
+    inputScripts.avanzarFrame();
+}
+
+void GameScene::registrarTeclaScript(int key, int action) {
+    inputScripts.onKey(key, action);
+}
+
+void GameScene::registrarMouseScript(double x, double y) {
+    inputScripts.onMouseMove(x, y);
 }
 
 void GameScene::encolarScriptsIniciales() {
@@ -735,11 +1237,21 @@ void GameScene::encolarScriptsIniciales() {
     bool hayPendientes = false;
     Position<GameObject*>* pos = objs->first();
     while (pos && pos->getElement()) {
-        if (Script* s = pos->getElement()->getComponent<Script>()) {
-            if (s->necesitaCompilar()) {
-                colaCompilacion_.push_back({s, pos->getElement()});
-                s->setAplazarCarga(true);
-                hayPendientes = true;
+        ListaDE<Component*>* componentes = pos->getElement()->getComponents();
+        if (componentes && !componentes->isEmpty()) {
+            Position<Component*>* componente = componentes->first();
+            while (componente) {
+                if (Script* s =
+                        dynamic_cast<Script*>(componente->getElement())) {
+                    if (s->necesitaCompilar()) {
+                        colaCompilacion_.push_back({s, pos->getElement()});
+                        s->setAplazarCarga(true);
+                        hayPendientes = true;
+                    }
+                }
+                componente = componente != componentes->last()
+                                 ? componentes->next(componente)
+                                 : nullptr;
             }
         }
         pos = (pos != objs->last()) ? objs->next(pos) : nullptr;
@@ -775,11 +1287,21 @@ void GameScene::procesarColaCompilacion() {
         bool hay = false;
         Position<GameObject*>* pos = objs->first();
         while (pos && pos->getElement()) {
-            if (Script* s = pos->getElement()->getComponent<Script>()) {
-                if (s->necesitaCompilar()) {
-                    colaCompilacion_.push_back({s, pos->getElement()});
-                    s->setAplazarCarga(true);
-                    hay = true;
+            ListaDE<Component*>* componentes = pos->getElement()->getComponents();
+            if (componentes && !componentes->isEmpty()) {
+                Position<Component*>* componente = componentes->first();
+                while (componente) {
+                    if (Script* s =
+                            dynamic_cast<Script*>(componente->getElement())) {
+                        if (s->necesitaCompilar()) {
+                            colaCompilacion_.push_back({s, pos->getElement()});
+                            s->setAplazarCarga(true);
+                            hay = true;
+                        }
+                    }
+                    componente = componente != componentes->last()
+                                     ? componentes->next(componente)
+                                     : nullptr;
                 }
             }
             pos = (pos != objs->last()) ? objs->next(pos) : nullptr;
@@ -841,8 +1363,18 @@ void GameScene::descargarScripts() {
     if (!gameObjects || gameObjects->isEmpty()) return;
     Position<GameObject*>* pos = gameObjects->first();
     while (pos && pos->getElement()) {
-        if (Script* script = pos->getElement()->getComponent<Script>())
-            script->liberarComportamiento();
+        ListaDE<Component*>* componentes = pos->getElement()->getComponents();
+        if (componentes && !componentes->isEmpty()) {
+            Position<Component*>* componente = componentes->first();
+            while (componente) {
+                if (Script* script =
+                        dynamic_cast<Script*>(componente->getElement()))
+                    script->liberarComportamiento();
+                componente = componente != componentes->last()
+                                 ? componentes->next(componente)
+                                 : nullptr;
+            }
+        }
         pos = (pos != gameObjects->last()) ? gameObjects->next(pos) : nullptr;
     }
 }
@@ -862,8 +1394,8 @@ void GameScene::gameScene() {
     const int fbH = static_cast<int>(io.DisplaySize.y);
     if (fbW <= 0 || fbH <= 0) return;
 
-    // Luces CPU de la pasada (misma semantica que GL_LIGHT0..7): la escena
-    // recoge y el SceneRenderer las aplica al backend y a los uniforms.
+    // Luces CPU de la pasada: la escena recoge los datos y el SceneRenderer
+    // los aplica a los uniforms del shader.
     LightData luces[LightSystem::kMaxLights];
     int numLuces = 0;
     lightSystem.collectLights(getGameObjectsScene(), luces, numLuces);
@@ -872,7 +1404,7 @@ void GameScene::gameScene() {
     ctx.gameObjects = getGameObjectsScene();
     ctx.apariencia = &apariencia;
     ctx.deltaTime = deltaTime;
-    ctx.editorActivo = isEditorActivo();
+    ctx.mostrarVisualesDepuracion = !modoJuego;
     ctx.selectedObject =
         editorController ? editorController->getSelectedObject() : nullptr;
     ctx.lights = luces;
@@ -881,34 +1413,55 @@ void GameScene::gameScene() {
     ctx.framebufferWidth = fbW;
     ctx.framebufferHeight = fbH;
     // Guia de eje: el estado vive en EditorController y la recta se dibuja con
-    // el mismo sistema de referencia que el gizmo (G alterna GLOBAL/LOCAL). Es
-    // parte del toolkit del editor, asi que se apaga junto con el (E): sin las
-    // interfaces tampoco se ve la guia, y no queda prendida sin forma de
-    // apagarla.
-    ctx.guiaEje = isEditorActivo() ? getGuiaEje() : GuiaEje::kSinGuia;
+    // el mismo sistema de referencia que el gizmo. Depuracion conserva el
+    // overlay aunque E oculte los paneles; Juego lo omite junto con los demas
+    // visuales auxiliares.
+    ctx.guiaEje = !modoJuego ? getGuiaEje() : GuiaEje::kSinGuia;
     ctx.guiaCoordenadasGlobales = isGizmoGlobal();
+    ctx.assetManager = assetManager.get();
+    // Proyecto 2D: la pasada omite el cielo y el difuminado por distancia.
+    ctx.modo2D = dimensionProyecto == DimensionProyecto::DosD;
 
     // Pasada de la escena (vistas previas + pasada principal + diag) en la
     // capa de Rendering.
     sceneRenderer->render(ctx, activeCameraObject, camara);
 
-    // Seleccion por clic + gizmo en su modulo: la fase de seleccion corre
-    // siempre (encender/apagar las interfaces); el dibujado del gizmo solo con
-    // el editor activo (ver el guard debajo).
-    gizmoController_->procesarSeleccion(io, camara, getGameObjectsScene());
+    // La seleccion y el gizmo son herramientas de Depuracion, independientes
+    // de la visibilidad de los paneles y ausentes en Juego.
+    if (!modoJuego && gizmoController_)
+        gizmoController_->procesarSeleccion(io, camara, getGameObjectsScene());
 
     /*
      * Navegación libre (sin E y sin objeto seleccionado): el sistema de
      * ventanas y el gizmo no se dibujan, solo la escena 3D.
      */
-    if (!isEditorActivo()) {
+    if (modoJuego && gizmoController_) {
         gizmoController_->apagar();
-        return;
     }
 
     GUI();
+    // El overlay HUD de las interfaces de juego solo se dibuja en el juego
+    // exportado (sin GUI del editor). En el editor, cada interfaz se previsualiza
+    // unicamente en la ventana dockable "Vista de interfaz" (pintarVistaInterfaz)
+    // para no tapar la GUI del editor con un overlay a pantalla completa.
+    if (!managerGUI) {
+        pintarInterfacesJuego();
+    }
 
-    gizmoController_->dibujarYRastrear(io, camara);
+    if (!CameraFrameSafety::validarCamara(sceneRegistry.get(),
+                                          activeCameraObject, camara)) {
+        activeCamera = nullptr;
+        activeCameraObject = nullptr;
+        camara = getActiveCamera();
+    }
+    if (!camara) {
+        if (gizmoController_) gizmoController_->apagar();
+        return;
+    }
+
+    if (!modoJuego && gizmoController_)
+        gizmoController_->dibujarYRastrear(
+            io, camara, getDimensionProyecto() == DimensionProyecto::DosD);
 }
 
 void GameScene::mostrarMensaje(const std::string& mensaje) {
@@ -966,21 +1519,7 @@ void GameScene::clearGuiaEje() {
 }
 
 void GameScene::toggleEditorInterfaces() {
-    // E siempre apaga TODO de un toque (todas las pestanas, el gizmo y el
-    // bloqueo de la camara) cuando hay algo activo; si no hay nada activo,
-    // enciende el modo editor. La logica antigua (menuActivo = !menuActivo)
-    // no limpiaba la seleccion: con un objeto seleccionado, isEditorActivo()
-    // segui a true tras E y la camara parecia no desbloquearse nunca.
-    const bool hayAlgoActivo =
-        menuActivo ||
-        (selecteableGUI &&
-         selecteableGUI->getReturnableEntity() != nullptr);
-    if (hayAlgoActivo) {
-        menuActivo = false;
-        clearSelection();
-    } else {
-        menuActivo = true;
-    }
+    menuActivo = !menuActivo;
 }
 
 float GameScene::getSensibilidadCamara() const noexcept {
@@ -1018,11 +1557,9 @@ void GameScene::setVentanaCamarasAbierta(bool abierta) noexcept {
 void GameScene::setMenuActivo(bool activo) noexcept { menuActivo = activo; }
 
 bool GameScene::isEditorActivo() const {
-    return menuActivo ||
-           (selecteableGUI && selecteableGUI->getReturnableEntity() != nullptr);
+    return menuActivo;
 }
 
 void GameScene::clearSelection() {
     if (selecteableGUI) selecteableGUI->setReturnableEntity(nullptr);
 }
-

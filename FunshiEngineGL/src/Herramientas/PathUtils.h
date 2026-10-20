@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,9 @@
 #ifndef PATHUTILS_H
 #define PATHUTILS_H
 
+#include <cctype>
+#include <string>
+
 // Separador de rutas dependiente de la plataforma, compartido por los
 // modulos que construyen rutas de archivo a mano (explorador de archivos).
 // Antes cada .cpp definia su propio PATH_SEP, y era facil divergir.
@@ -27,5 +30,69 @@ inline constexpr char PATH_SEP = '\\';
 #else
 inline constexpr char PATH_SEP = '/';
 #endif
+
+// Regla unica de "que es un separador de ruta" para COTEJAR rutas (comparar
+// prefijos, decidir si una ruta cae bajo otra). No confundir con PATH_SEP,
+// que es el separador con el que el motor ESCRIBE rutas nuevas.
+//
+// En Windows '/' y '\' son el mismo separador para el sistema de archivos y
+// el motor mezcla los dos: ProjectPaths arma la raiz con '/' (directorioSrc)
+// y absolutizarRuta concatena con '/', mientras que el explorador publica lo
+// que devuelve std::filesystem, que concatena con '\'. Cotejar literalmente
+// hacia que mover o renombrar una carpeta no reescribiera ninguna referencia
+// de la escena.
+//
+// En Linux '\' es un caracter perfectamente valido en un nombre de archivo
+// (p. ej. "a\b.fbx"), asi que ahi SOLO '/' separa: tratarlo como separador
+// inventaria rutas que no existen.
+inline bool esSeparadorPath(char c) {
+#ifdef _WIN32
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
+}
+
+// Dos bytes de ruta equivalen: iguales, los dos separadores (en Windows) o los
+// mismos caracteres sin distinguir el caso (solo en Windows, donde el sistema de
+// archivos no distingue "Assets" de "assets"). Con esa equivalencia, mover o
+// renombrar reescribe la referencia de la escena tambien cuando la ruta guardada
+// trae otra capitalizacion; en Linux "X" y "x" son dos archivos distintos y el
+// cotejo se queda sensible al caso.
+inline bool bytesRutaEquivalentes(char a, char b) {
+    if (a == b) return true;
+#ifdef _WIN32
+    if (std::tolower(static_cast<unsigned char>(a)) ==
+        std::tolower(static_cast<unsigned char>(b)))
+        return true;
+#endif
+    return esSeparadorPath(a) && esSeparadorPath(b);
+}
+
+// Indice del ULTIMO separador de la ruta, o std::string::npos si no tiene
+// ninguno: sirve para partir "carpeta/archivo" en sus dos partes sin inventarse
+// un directorio. Al revisar los bytes con esSeparadorPath, la barra invertida
+// solo cuenta donde el sistema de archivos la trata como separador; en Linux es
+// un caracter mas del nombre ("con\barra.txt" es un archivo de una carpeta, no
+// una ruta anidada).
+inline std::string::size_type indiceSeparadorFinal(const std::string& ruta) {
+    for (std::string::size_type i = ruta.size(); i-- > 0;)
+        if (esSeparadorPath(ruta[i])) return i;
+    return std::string::npos;
+}
+
+// Dice si `ruta` cae exactamente bajo `prefijo` (igual o seguida de un
+// separador), respetando NUNCA igualar un prefijo que no cierre en un
+// separador (p.ej. "srcA" no debe cubrir "srcAb"). El cotejo es byte a byte
+// con la equivalencia de separadores de arriba: como es posicional y de
+// longitudes iguales, el punto de corte (`prefijo.size()`) sigue siendo
+// valido aunque los separadores del prefijo difieran de los de `ruta`.
+inline bool rutaBajo(const std::string& ruta, const std::string& prefijo) {
+    if (ruta.size() < prefijo.size()) return false;
+    for (std::size_t i = 0; i < prefijo.size(); ++i)
+        if (!bytesRutaEquivalentes(ruta[i], prefijo[i])) return false;
+    if (ruta.size() == prefijo.size()) return true;
+    return esSeparadorPath(ruta[prefijo.size()]);
+}
 
 #endif

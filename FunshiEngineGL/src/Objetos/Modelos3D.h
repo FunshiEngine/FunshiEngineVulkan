@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@
 #include "../Objetos/GameObject.h"
 
 class AssetManager;
+class RegistroDiagnosticos;
 
 class Modelos3D : public GameObject {
 private:
@@ -41,6 +42,7 @@ private:
     // SceneSerializer). Con nullptr se usa el AssimpMeshLoader local como
     // respaldo (caso del inspector por defecto, que nunca dibuja).
     AssetManager* assets_ = nullptr;
+    RegistroDiagnosticos* diagnosticos_ = nullptr;
 
     void setObject();
 
@@ -52,6 +54,9 @@ public:
     // escena comparten mallas via el cache en lugar de parsear Assimp por
     // objeto.
     void setAssetManager(AssetManager* assets) noexcept { assets_ = assets; }
+    void setRegistroDiagnosticos(RegistroDiagnosticos* registro) noexcept {
+        diagnosticos_ = registro;
+    }
 
     void setPath(std::string path);
     std::string getPath();
@@ -67,8 +72,8 @@ protected:
     void deserializeEntity() override;
 
 public:
-    void saveEntity(std::string filename) override;
-    void loadEntity(std::string filename) override;
+    bool saveEntity(std::string filename) override;
+    bool loadEntity(std::string filename) override;
 };
 
 #endif

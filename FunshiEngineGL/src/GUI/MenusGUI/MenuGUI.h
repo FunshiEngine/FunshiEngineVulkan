@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -128,6 +128,27 @@ public:
     const std::string& getProyectoAEliminar() const noexcept;
     void setProyectoAEliminar(const std::string& nombre) noexcept;
     void limpiarProyectoAEliminar() noexcept;
+
+    // ---- Vista ConfigProyecto (barra de secciones + intenciones) ----
+
+    // Seccion activa de la barra de navegacion de ConfigProyecto (el gestor
+    // no la consume; es estado de UI consultado por la vista).
+    MenuModel::SeccionConfig getSeccionConfig() const noexcept;
+    void setSeccionConfig(MenuModel::SeccionConfig seccion) noexcept;
+
+    // Intencion de la ultima accion de proyecto del usuario (Abrir/Crear/
+    // Ninguna). Solo informa la redaccion de los mensajes del gestor de
+    // proyectos; la autoridad para decidir entre crear y abrir es la
+    // existencia real de la carpeta (fs::exists), no esta bandera. Se limpia
+    // cuando el gestor la consume.
+    MenuModel::AccionProyecto getAccionProyecto() const noexcept;
+    void setAccionProyecto(MenuModel::AccionProyecto accion) noexcept;
+    void limpiarAccionProyecto() noexcept;
+
+    // Dimension elegida para el proyecto nuevo en la seccion "Crear proyecto".
+    // La lee el gestor al crear y la persiste en la config del proyecto.
+    DimensionProyecto getDimensionProyecto() const noexcept;
+    void setDimensionProyecto(DimensionProyecto dimension) noexcept;
 
     // Refresca el listado de proyectos disponibles mostrado en el menu: los
     // proyectos SON las carpetas del directorio base de MotorGrafico. La

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,17 +34,28 @@ constexpr uint32_t MASCARA_VIGILANCIA =
     IN_CREATE | IN_DELETE | IN_MOVE | IN_MODIFY | IN_DELETE_SELF |
     IN_MOVE_SELF;
 #endif
-
-constexpr std::chrono::seconds INTERVALO_POLLING(3);
 } // namespace
 
-FileSystemWatcher::FileSystemWatcher(const std::string& raiz) : raiz_(raiz) {
+FileSystemWatcher::FileSystemWatcher(const std::string& raiz,
+                                     std::chrono::milliseconds intervalo)
+    : raiz_(raiz)
+#if !defined(__linux__)
+      ,
+      intervaloPolling_(intervalo)
+#endif
+{
 #if defined(__linux__)
+    (void)intervalo; // el polling no existe ahi; inotify no tiene intervalo.
     fd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (fd_ < 0) return; // sin inotify: el watcher queda inactivo (fd_ == -1)
     aplicarVigilanciaRecursiva();
 #else
     ultimoPulso_ = std::chrono::steady_clock::now();
+    // Semilla con el mtime ACTUAL de la raiz: con el epoch por defecto el
+    // primer pulso compararia "epoch != mtime real" y reportaria un cambio
+    // que nadie hizo, forzando un rescaneo vano arrancando.
+    std::error_code ec;
+    ultimoMtimeRaiz_ = std::filesystem::last_write_time(raiz_, ec);
 #endif
 }
 
@@ -138,12 +149,12 @@ bool FileSystemWatcher::huboCambiosYConsumir() {
     return false;
 #else
     // Fallback sin inotify: dimensionar por el mtime de la raiz evita el
-    // rescaneo completo cada 3s aun sin ningun cambio. Detecta choques
+    // rescaneo completo cada pulso aun sin ningun cambio. Detecta choques
     // directos de la raiz; los cambios anidados fuera de la carpeta visible
-    // quedan para el grid (que se auto-invalida por mtime, R5) o un rescaneo
+    // quedan para el grid (que se auto-invalida por mtime) o un rescaneo
     // manual. Es el mejor esfuerzo en una plataforma sin watch nativo aqui.
     const auto ahora = std::chrono::steady_clock::now();
-    if (ahora - ultimoPulso_ >= INTERVALO_POLLING) {
+    if (ahora - ultimoPulso_ >= intervaloPolling_) {
         ultimoPulso_ = ahora;
         std::error_code ec;
         const auto mtime = std::filesystem::last_write_time(raiz_, ec);

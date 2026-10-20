@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@
 class LineBuilder;
 
 // Lado GPU de un LineBuilder: posee un handle opaco al batch del backend (VAO +
-// VBO en OpenGL3) con RAII, igual que MeshGPU para las mallas. El consumidor
+// VBO en una API, buffer en otra) con RAII, igual que MeshGPU para las mallas. El consumidor
 // (grilla, marcadores, colliders) reutiliza la misma instancia frame a frame:
 // la primera vez sube la geometria y despues solo la actualiza, con un unico
 // draw call por pase en vez de uno por linea.

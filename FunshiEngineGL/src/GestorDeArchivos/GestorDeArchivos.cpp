@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,21 @@
 #include <filesystem>
 #include <fstream>
 #include <utility>
+
+#include "../Herramientas/PathUtils.h"
+
+namespace {
+// El destino de una copia o de un movimiento de carpeta no puede caer dentro de
+// la propia carpeta de origen: el recorrido del origen se encuentra la copia que
+// acaba de crear y se reproduce hasta que la ruta deja de caber, dejando un
+// arbol basura a medias. El cotejo cierra en un separador para no tomar
+// "srcCopia" por algo dentro de "src".
+bool destinoDentroDelOrigen(const std::filesystem::path& origen,
+                            const std::filesystem::path& destino) {
+    return rutaBajo(destino.lexically_normal().string(),
+                    origen.lexically_normal().string());
+}
+} // namespace
 
 GestorDeArchivos::GestorDeArchivos(std::string pathProyect, std::string rootName)
     : treeFilePath(new ArbolEnlazado<File*>()), folderActual(nullptr), rootName(std::move(rootName)) {
@@ -169,9 +184,11 @@ bool GestorDeArchivos::eliminarArchivo(const std::string& path) {
 bool GestorDeArchivos::crearCarpeta(const std::string& path) {
     if (path.empty()) return false;
     std::error_code ec;
-    if (std::filesystem::create_directory(path, ec)) return true;
-    // create_directory devuelve false si ya existe (sin error): es exitoso.
-    return std::filesystem::is_directory(path, ec);
+    // create_directory devuelve false tanto si el destino ya existia como si el
+    // sistema lo rechazo, y quien llama solo ve un bool: un destino ya ocupado
+    // devuelve false porque esta vez no se creo nada, y el explorador puede
+    // avisarlo en vez de reportar un exito que no ocurrio.
+    return std::filesystem::create_directory(path, ec);
 }
 
 bool GestorDeArchivos::crearArchivo(const std::string& path,
@@ -187,6 +204,9 @@ bool GestorDeArchivos::crearArchivo(const std::string& path,
 bool GestorDeArchivos::copiarCarpeta(const std::string& origen,
                                      const std::string& destino) {
     if (origen.empty() || destino.empty()) return false;
+    // Antes de tocar el disco: copy() no se detiene solo ante un destino
+    // anidado, se copia el mismo origen una y otra vez hasta fallar.
+    if (destinoDentroDelOrigen(origen, destino)) return false;
     std::error_code ec;
     // Si destino no existe, copy() lo crea y vuelca el contenido de origen
     // dentro (con dotfiles, a diferencia del "cp -r src/* dst" anterior).
@@ -214,13 +234,23 @@ bool GestorDeArchivos::renombrar(const std::string& ruta,
     // Cualquier separador / \ es invalido en un nombre de salida; no dejar
     // que un nombre malicioso cree una ruta nueva por accidente.
     if (nuevoNombre.find_first_of("/\\") != std::string::npos) return false;
+    const std::filesystem::path destino = objetivo.parent_path() / nuevoNombre;
     std::error_code ec;
-    std::filesystem::rename(objetivo, objetivo.parent_path() / nuevoNombre, ec);
+    // No se pisa un destino existente (mismo criterio que mover): en POSIX un
+    // rename sobre un archivo lo reemplaza en silencio y se perderia su
+    // contenido con un renombre accidental. Se permite renombrar al MISMO
+    // elemento (cambiar "assets" por "Assets" en Windows, donde resuelven al
+    // mismo directorio).
+    if (std::filesystem::exists(destino, ec)) {
+        std::error_code otro;
+        if (!std::filesystem::equivalent(objetivo, destino, otro)) return false;
+    }
+    std::filesystem::rename(objetivo, destino, ec);
     return !ec;
 }
 
 bool GestorDeArchivos::mover(const std::string& origen,
-                             const std::string& destino) {
+                              const std::string& destino) {
     if (origen.empty() || destino.empty()) return false;
 
     std::error_code ec;
@@ -232,18 +262,12 @@ bool GestorDeArchivos::mover(const std::string& origen,
     // original intacto y el usuario creeria que se movio cuando no.
     if (std::filesystem::exists(hacia, ec)) return false;
 
-    // Carpeta dentro de si misma (o de un descendiente): el error_code de la
-    // recursion cortaria a mitad y dejaria el arbol a medias en disco.
-    if (std::filesystem::is_directory(desde, ec)) {
-        const std::filesystem::path padreDestino =
-            hacia.parent_path().lexically_normal();
-        std::filesystem::path actual = desde.lexically_normal();
-        for (;;) {
-            if (actual == padreDestino) return false;
-            const std::filesystem::path padre = actual.parent_path();
-            if (padre == actual) break; // se llego a la raiz sin coincidir
-            actual = padre;
-        }
+    // Evitar mover una carpeta DENTRO de si misma o de un descendiente:
+    // el destino no puede estar bajo el origen (mover ancestro -> descendiente),
+    // ni ser el propio origen.
+    if (std::filesystem::is_directory(desde, ec) &&
+        destinoDentroDelOrigen(desde, hacia)) {
+        return false;
     }
 
     std::filesystem::rename(desde, hacia, ec);

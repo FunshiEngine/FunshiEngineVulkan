@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,8 +36,12 @@ public:
     Binario& operator=(const Binario&) = delete;
 
     std::string getPath();
-    void ofOpenBinary();
-    void ifOpenBinary();
+    // Devuelven false si el archivo no se pudo abrir (sin directorio, sin
+    // permisos...). En ese caso NO se escribe ni se lee nada y el fallo queda
+    // logueado: antes los dos devolvian void y cada write()/read() fallaba en
+    // silencio.
+    bool ofOpenBinary();
+    bool ifOpenBinary();
     void ofCloseBinary();
     void ifCloseBinary();
     std::ofstream* getOfBinariFile();

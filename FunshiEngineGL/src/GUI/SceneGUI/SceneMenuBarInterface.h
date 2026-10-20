@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,22 +19,36 @@
 #ifndef SCENEMENUBARINTERFACE_H
 #define SCENEMENUBARINTERFACE_H
 #include <iostream>
+#include <functional>
 #include <map>
 #include <string>
 #include <memory>
 #include "../ObjetosGUI/SettingsObjectInterface.h"
 #include "../../Events/EditorEventBus.h"
-#include "../../Exportador/GameExporter.h"
 #include "../Export/ExportDialog.h"
 #include <imgui.h>
 
 using namespace std;
 
+class IconosGUI;
+
 class SceneMenuBarInterface : public GeneralUserInterface {
+public:
+    enum class AccionSimulacion {
+        IniciarDepuracion,
+        IniciarJuego,
+        Pausa,
+        Reset,
+        Terminar
+    };
+
 protected:
     bool* toggleBool = nullptr;
+    bool* pausada_ = nullptr;
+    bool* modoJuego_ = nullptr;
     bool* gizmoGlobal = nullptr;
-    bool cargarScripts = false;
+    std::function<void(AccionSimulacion)> accionSimulacion_;
+    IconosGUI* iconosGUI_ = nullptr;
     EditorEventBus* busEditor = nullptr;
     std::map<std::string, bool> ventanas_;
     std::unique_ptr<ExportDialog> exportDialog_;
@@ -44,10 +58,13 @@ protected:
 public:
     SceneMenuBarInterface(bool stateGUI);
     void setActivador(bool* targetBool);
+    void setPausa(bool* pausada) noexcept;
+    void setModoJuego(bool* modoJuego) noexcept;
     bool* getActivador();
+    void setAccionSimulacion(
+        std::function<void(AccionSimulacion)> accion);
+    void setIconosGUI(IconosGUI* iconos) noexcept;
     void setGizmoGlobal(bool* target);
-    bool getCargarScripts();
-    void setCargarScripts(bool value);
     void setEditorEventBus(EditorEventBus* bus);
     void setVentanas(const std::map<std::string, bool>& estados);
     void setProyectoActual(const std::string& proyecto);

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@
 #include "../GeneralUserInterface.h"
 #include "../../Herramientas/TreeGUI/TreeGUI.h"
 #include "../WindowNames.h"
+#include "RenombrarElemento.h"
 
 class File;
 class Carpeta;
@@ -34,39 +35,44 @@ class EditorEventBus;
 
 // Panel "BrowseFile": dibuja el arbol de carpetas del proyecto y es la unica
 // vista que actualiza la seleccion compartida (FileSelection). Ya no posee
-// modelo: conversa con la fachada FileManager (R1) y refleja los cambios del
-// Filesystem comparando su ultimo contador con el de la seleccion (R3).
+// modelo: conversa con la fachada FileManager y refleja los cambios del
+// Filesystem comparando su ultimo contador con el de la seleccion.
 class TreeFilesInterface : public GeneralUserInterface {
 protected:
     bool actualizar = false;
     FileManager* fileManager = nullptr;
     ArbolEnlazado<File*>* arbolDeArchivos = nullptr;
     IconosGUI* iconosGUI = nullptr;
-    // Estado de colapso por RUTA (R4): sobrevive a la reconstruccion del arbol
+    // Estado de colapso por RUTA: sobrevive a la reconstruccion del arbol
     // (los punteros a File* quedan colgando tras un rescaneo). La clave es la
     // ruta completa de la carpeta, igual que FileSelection::rutaVisible.
     std::set<std::string> openPaths;
     // Eliminacion recursiva diferida: el menu contextual solo encola la RUTA
     // del nodo a borrar y esta se resuelve contra el arbol vigente al final
-    // del frame (fuera del recorrido) para no invalidar iteradores (B4). Por
+    // del frame (fuera del recorrido) para no invalidar iteradores. Por
     // ruta, igual que openPaths: los punteros a File* quedan colgando cuando
     // un rescaneo reconstruye el arbol (mismo invariante que ya siguen
     // rutaVisible y navegacionPendiente).
     std::string carpetaAEliminar;
-    // Confirmacion modal de "Eliminar Carpeta" (R7): ruta de la carpeta a
+    // Confirmacion modal de "Eliminar Carpeta": ruta de la carpeta a
     // confirmar, re-resuelta a puntero SOLO dentro del modal contra el arbol
     // del frame. Un puntero guardado desde el menu quedaría colgando si un
     // rescaneo entra con el modal abierto.
     bool confirmarEliminar = false;
     std::string carpetaAConfirmar;
-    // Renombrado inline de una carpeta en el arbol (R6), por RUTA igualmente.
-    // El editor se dibuja en la fila cuya ruta coincide; si la carpeta deja de
-    // existir tras un rescaneo el editor simplemente deja de dibujarse, sin
-    // referenciar memoria liberada ni confundir filas (el heap reusa
-    // la direccion del nodo viejo).
-    std::string carpetaRenombrando;
-    bool renombrandoInline = false;
-    char bufferRenombrar[256] = "";
+    // Renombrado de una carpeta en el arbol: el modal compartido con el
+    // grid (RenombrarElemento.h) guarda la ruta a renombrar. Por RUTA y no por
+    // puntero: un rescaneo reconstruye el arbol y los File* quedan colgando
+    // (mismo invariante que rutaVisible y navegacionPendiente).
+    RenombrarElemento::Modal modalRenombrar;
+    // Crear nueva carpeta con dialogo de nombre (patron del grid: abrir popup,
+    // input texto, confirmar). Estado aislado para no colisionar con renombrado.
+    bool abrirPopupNombre = false;
+    char nombreNuevo[256] = {0};
+    std::string rutaPadreNuevaCarpeta;
+    // Motivo por el que no se pudo crear la carpeta, para mostrarlo sin cerrar
+    // el modal. Se limpia al abrirlo.
+    std::string errorNuevaCarpeta;
     // Ultimo contador de cambios que este panel ya rescaneco.
     unsigned long ultimoContadorVisto = 0;
 

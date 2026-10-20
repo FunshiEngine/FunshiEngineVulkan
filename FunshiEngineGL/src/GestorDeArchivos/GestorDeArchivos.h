@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@
 
 // Infraestructura de acceso al Filesystem del explorador de archivos:
 // construye el arbol de carpetas de un proyecto y ejecuta las operaciones de
-// dominio (crear/eliminar/copiar). R2: todo el acceso a disco usa
+// dominio (crear/eliminar/copiar). Todo el acceso a disco usa
 // std::filesystem (ambas plataformas) en lugar de APIS por #ifdef
 // (dirent.h / WinAPI) y de system("rm -rf ...").
 //

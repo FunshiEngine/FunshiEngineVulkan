@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,6 +119,13 @@ void ScriptRuntime::llamarActualizar(ComportamientoCargado& c, GameObject* owner
 void ScriptRuntime::llamarDetener(ComportamientoCargado& c, GameObject* owner) {
     if (BackendScript* backend = backendPara(c.lenguaje))
         backend->llamarDetener(c, owner);
+}
+
+void ScriptRuntime::llamarContacto(ComportamientoCargado& c,
+                                   GameObject* owner, Collider* propio,
+                                   Collider* otro, TipoContacto tipo) {
+    if (BackendScript* backend = backendPara(c.lenguaje))
+        backend->llamarContacto(c, owner, propio, otro, tipo);
 }
 
 void ScriptRuntime::inyectar(

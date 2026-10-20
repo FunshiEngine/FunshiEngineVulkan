@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,10 @@
     SPDX-License-Identifier: Apache-2.0
 */
 #include "LineRenderer.h"
+#include "ContratoRender.h"
+#include "../Diagnosticos/RegistroDiagnosticos.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -27,23 +30,8 @@
 #include "Backend/IRenderBackend.h"
 #include "LineBatch.h"
 #include "LineBuilder.h"
+#include "ProyeccionCamara.h"
 #include "Shaders/ShaderProgram.h"
-#include "Shaders/ShaderSources.h"
-
-namespace {
-
-// Distancia al plano cercano a partir de la matriz de proyeccion de la GL:
-// con m[2][2] = -(f+n)/(f-n) y m[2][3] = -2fn/(f-n) sale n = m23/(m22-1).
-// La usa el shader para recortar los segmentos contra el plano cercano.
-float nearDesdeProyeccion(const glm::mat4& p) {
-    const float den = p[2][2] - 1.0f;
-    if (std::fabs(den) < 1e-6f) return 0.01f;
-    const float near = p[2][3] / den;
-    if (!std::isfinite(near) || near <= 0.0f) return 0.01f;
-    return near;
-}
-
-} // namespace
 
 LineRenderer::LineRenderer() = default;
 
@@ -59,6 +47,8 @@ void LineRenderer::setVista(const float view[16],
     }
     view_ = glm::make_mat4(view);
     projection_ = glm::make_mat4(projection);
+    const glm::mat4 invView = glm::inverse(view_);
+    posicionCamara_ = glm::vec3(invView[3]);
     vistaValida_ = true;
 }
 
@@ -67,18 +57,33 @@ void LineRenderer::setViewport(int width, int height) noexcept {
     viewportHeight_ = height > 0 ? height : 0;
 }
 
+void LineRenderer::setHorizonteVisual(float inicio, float fin) noexcept {
+    if (!std::isfinite(inicio) || !std::isfinite(fin) || fin <= 0.0f) {
+        horizonteInicio_ = 0.0f;
+        horizonteFin_ = 150.0f;
+        return;
+    }
+    horizonteFin_ = fin;
+    horizonteInicio_ = std::clamp(inicio, 0.0f, fin);
+}
+
 bool LineRenderer::inicializar() {
-    if (shader_) return true;
-    if (!Rendering::Backend::activeBackend().init()) return false;
+    if (shader_) return shader_->isValid();
+    // El backend tiene que estar disponible para poder dibujar: la
+    // inicializacion (que necesita la ventana) la hace la Ventana al
+    // arrancar.
+    if (!Rendering::Backend::activeBackend().available()) return false;
     try {
         shader_ = std::make_unique<ShaderProgram>(
-            ShaderProgram::fromSource(kLineVertexShader, kLineFragmentShader));
+            ShaderProgram::create(Rendering::Contrato::ShaderKind::Lineas));
     } catch (const std::exception& e) {
+        registrarExcepcionDiagnostica("Rendering/LineRenderer", e,
+                                      NivelDiagnostico::Error);
         std::cerr << "[LineRenderer] Shader de lineas no disponible: " << e.what()
                   << '\n';
         shader_.reset();
     }
-    return shader_ != nullptr;
+    return shader_ != nullptr && shader_->isValid();
 }
 
 bool LineRenderer::preparar(const float model[16], float anchoPx) {
@@ -90,14 +95,18 @@ bool LineRenderer::preparar(const float model[16], float anchoPx) {
     if (viewportWidth_ <= 0 || viewportHeight_ <= 0) return false;
 
     shader_->use();
-    shader_->setMat4("uModel", model ? glm::make_mat4(model) : glm::mat4(1.0f));
-    shader_->setMat4("uView", view_);
-    shader_->setMat4("uProjection", projection_);
+    shader_->setMat4(Rendering::Contrato::Uniforme::kModel, model ? glm::make_mat4(model) : glm::mat4(1.0f));
+    shader_->setMat4(Rendering::Contrato::Uniforme::kView, view_);
+    shader_->setMat4(Rendering::Contrato::Uniforme::kProjection, projection_);
     const float viewport[4] = {static_cast<float>(viewportWidth_),
                                static_cast<float>(viewportHeight_), 0.0f, 0.0f};
-    shader_->setVec4("uViewport", viewport);
-    shader_->setFloat("uWidth", anchoPx > 0.0f ? anchoPx : 1.0f);
-    shader_->setFloat("uNear", nearDesdeProyeccion(projection_));
+    shader_->setVec4(Rendering::Contrato::Uniforme::kViewport, viewport);
+    shader_->setFloat(Rendering::Contrato::Uniforme::kWidth, anchoPx > 0.0f ? anchoPx : 1.0f);
+    shader_->setFloat(Rendering::Contrato::Uniforme::kNear, ProyeccionCamara::nearDesdeProyeccion(
+                                     glm::value_ptr(projection_)));
+    shader_->setVec3(Rendering::Contrato::Uniforme::kCameraPosition, posicionCamara_);
+    shader_->setFloat(Rendering::Contrato::Uniforme::kDistanceFadeStart, horizonteInicio_);
+    shader_->setFloat(Rendering::Contrato::Uniforme::kDistanceFadeEnd, horizonteFin_);
     return true;
 }
 
@@ -105,7 +114,10 @@ void LineRenderer::dibujar(const LineBatch& batch, const float model[16],
                            float anchoPx) {
     if (!batch.isUploaded() || batch.getVertexCount() == 0) return;
     if (!preparar(model, anchoPx)) return;
+    auto& backend = Rendering::Backend::activeBackend();
+    backend.setBlendEnabled(true);
     batch.draw();
+    backend.setBlendEnabled(false);
     ShaderProgram::unbind();
 }
 
@@ -126,4 +138,3 @@ LineRenderer& lineRenderer() {
     static LineRenderer renderer;
     return renderer;
 }
-

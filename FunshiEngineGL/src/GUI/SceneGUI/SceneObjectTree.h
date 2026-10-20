@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +58,9 @@ private:
     void applyDeferredOperations();
     void resetState();
     void unbind();
+    void dibujarDialogosModales();
+    void manejarAtajos();
+    static bool esDescendiente(GameObject* nodo, GameObject* ancestro);
 
     SceneRegistry* scene = nullptr;
     EditorController* editor = nullptr;
@@ -67,13 +70,32 @@ private:
 
     // Nodos abiertos en la jerarquia (estado de colapso persistente).
     TreeIG::OpenState openNodes;
-    // Estado de renombrado en linea.
+    // Estado de renombrado en linea (doble click o menu Renombrar).
     GameObject* renombrando = nullptr;
+    GameObject* objetoSeleccionPendiente = nullptr;
+    ImVec2 posicionInicioSeleccion = ImVec2(0.0f, 0.0f);
+    GameObject* objetoBajoMouseAlSoltar_ = nullptr;
     // Operaciones diferidas: esperan al final del recorrido para mutar el
     // arbol con seguridad.
     GameObject* objetoAEliminar = nullptr;
     GameObject* objetoAReParentar = nullptr;
     GameObject* objetoPadreNuevo = nullptr;
+    // Portapapeles de copiar/pegar (Ctrl+C/X/V): no es dueño, solo observa.
+    // Pegar varias veces el mismo objeto conserva el portapapeles; cortar lo
+    // vacia al pegar (es mover). El pegado tambien es diferido.
+    GameObject* objetoCopiado = nullptr;
+    bool cortePendiente = false;
+    GameObject* objetoAPegar = nullptr;
+    GameObject* padreDePegado = nullptr;
+    // Desanidar a raiz diferido: el objeto a mover a la raiz.
+    GameObject* objetoADesanidar = nullptr;
+
+    // Estado de dialogos modales (click derecho -> Cambiar ID / Renombrar / Eliminar).
+    enum class DialogoTipo { Ninguno, CambiarID, Renombrar, Eliminar, CrearPrefab };
+    DialogoTipo dialogoActivo = DialogoTipo::Ninguno;
+    GameObject* objetoEnDialogo = nullptr;
+    char bufferDialogo[256] = "";
+    bool dialogoRecienAbierto = false; // para abrir el popup solo la primera vez
 };
 
 #endif

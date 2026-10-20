@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,8 @@
 #define _HAS_STD_BYTE 0
 #endif
 
-// Solo el tipo GLFWwindow; el contexto/estado GL vive en el backend.
+// Solo el tipo GLFWwindow; la ventana no tiene contexto grafico: la superficie
+// la crea el backend de render que se instale.
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 

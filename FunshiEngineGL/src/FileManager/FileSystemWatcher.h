@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,11 +36,18 @@
 // non-blocking y se vacia una vez por frame desde el hilo de la GUI. La
 // vigilancia es recursiva (un watch por carpeta) y se re-aplica sobre las
 // carpetas que aparecen al vuelo. En plataformas sin inotify cae a un polling
-// temporal (un rescaneo cada 3s), que con el arbol "barato" de
-// compareTreesByPath solo reconstruye si realmente cambio algo.
+// temporal (un rescaneo cada `intervalo`, por defecto 3s), que con el arbol
+// "barato" de compareTreesByPath solo reconstruye si realmente cambio algo.
+// El intervalo se puede inyectar para que las pruebas ejerciten el contrato
+// del polling sin esperar el pulso de produccion; en Linux no se usa.
 class FileSystemWatcher {
 public:
-    explicit FileSystemWatcher(const std::string& raiz);
+    static constexpr std::chrono::milliseconds INTERVALO_POLLING_DEFECTO{
+        3000};
+
+    explicit FileSystemWatcher(
+        const std::string& raiz,
+        std::chrono::milliseconds intervalo = INTERVALO_POLLING_DEFECTO);
     ~FileSystemWatcher();
 
     FileSystemWatcher(const FileSystemWatcher&) = delete;
@@ -62,6 +69,9 @@ private:
     std::unordered_map<int, std::string> wdDeCarpeta_;
     bool huboCambios_ = false;
 #if !defined(__linux__)
+    // Fallback de polling: intervalo entre pulsos (inyectable desde el test)
+    // y el estado del pulso anterior.
+    std::chrono::milliseconds intervaloPolling_;
     std::chrono::steady_clock::time_point ultimoPulso_;
     std::filesystem::file_time_type ultimoMtimeRaiz_{};
 #endif

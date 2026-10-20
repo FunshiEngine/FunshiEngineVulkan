@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,8 @@
 
 #include <algorithm>
 #include <functional>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "../Objetos/GameObject.h"
 #include "../Objetos/Modelos3D.h"
@@ -125,10 +127,7 @@ GameObject* SceneRegistry::createObject(std::unique_ptr<GameObject> object,
     if (!parentPosition) return nullptr;
 
     if (object->getId() == 0) {
-        int nextId = 1;
-        for (const auto& candidate : ownedGameObjects)
-            nextId = std::max(nextId, candidate->getId() + 1);
-        object->setId(nextId);
+        object->setId(siguienteIdDisponible());
     }
 
     GameObject* raw = object.get();
@@ -138,6 +137,13 @@ GameObject* SceneRegistry::createObject(std::unique_ptr<GameObject> object,
     raw->setParentEntity(parent);
     refreshGameObjectView();
     return raw;
+}
+
+int SceneRegistry::siguienteIdDisponible() const noexcept {
+    int nextId = 1;
+    for (const auto& candidate : ownedGameObjects)
+        nextId = std::max(nextId, candidate->getId() + 1);
+    return nextId;
 }
 
 bool SceneRegistry::replaceRoot(std::unique_ptr<GameObject> root) {
@@ -202,7 +208,30 @@ bool SceneRegistry::reparent(GameObject* object, GameObject* parent) {
     } catch (...) {
         return false;
     }
+    // Preservar la pose mundial: el local se interpreta contra el padre nuevo,
+    // asi que hay que reescribirlo con inverse(mundoPadre) * mundoHijo. Los
+    // descendientes no se tocan: sus locales no cambian y el mundo del padre
+    // tampoco, de modo que sus mundos se conservan solos.
+    Transform* transformHijo = object->getComponent<Transform>();
+    Transform* transformPadre = parent->getComponent<Transform>();
+    float mundoHijo[16];
+    const bool preservarPose =
+        transformHijo != nullptr && transformPadre != nullptr;
+    if (preservarPose)
+        buildMatrixFromTransform(object->getGlobalTransform(), mundoHijo);
+
     object->setParentEntity(parent);
+
+    if (preservarPose) {
+        float mundoPadre[16];
+        buildMatrixFromTransform(parent->getGlobalTransform(), mundoPadre);
+        glm::mat4 localNuevo =
+            glm::inverse(glm::make_mat4(mundoPadre)) * glm::make_mat4(mundoHijo);
+        float localArr[16];
+        const float* ptr = glm::value_ptr(localNuevo);
+        for (int i = 0; i < 16; ++i) localArr[i] = ptr[i];
+        decomposeMatrixToTransform(localArr, transformHijo);
+    }
     refreshGameObjectView();
     return true;
 }

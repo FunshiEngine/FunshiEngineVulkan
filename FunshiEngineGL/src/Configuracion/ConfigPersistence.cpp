@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,10 @@
     SPDX-License-Identifier: Apache-2.0
 */
 #include "ConfigPersistence.h"
+#include "../Diagnosticos/RegistroDiagnosticos.h"
 
 #include <nlohmann/json.hpp>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -66,7 +68,16 @@ nlohmann::json leerJson(const std::string& ruta) {
     nlohmann::json j;
     try {
         in >> j;
+    } catch (const std::exception& e) {
+        registrarExcepcionDiagnostica(
+            "Configuracion/ConfigPersistence", e,
+            NivelDiagnostico::Advertencia, "configuracion:" + ruta);
+        return nlohmann::json::object();
     } catch (...) {
+        registrarFalloDiagnostico(
+            "Configuracion/ConfigPersistence", "error_desconocido",
+            "No se pudo interpretar la configuracion " + ruta,
+            NivelDiagnostico::Advertencia);
         return nlohmann::json::object();
     }
     return j.is_object() ? j : nlohmann::json::object();
@@ -87,7 +98,14 @@ nlohmann::json ConfigPersistence::aparienciaToJson(const Apariencia& a) {
     j["temaClaro"] = a.temaClaro;
     j["blancoYNegro"] = a.blancoYNegro;
     j["acento"] = {a.acento[0], a.acento[1], a.acento[2], a.acento[3]};
-    j["fondo"] = {a.fondo[0], a.fondo[1], a.fondo[2]};
+    // Los dos colores del cielo se guardan tal como los eligio el usuario (sin
+    // correcciones). La clave antigua "fondo" (un unico color para todo el
+    // fondo) se sigue LEYENDO para no perder configuraciones viejas, pero no se
+    // vuelve a escribir: escribirla con el color superior era un dato falso para
+    // cualquier lector que todavia la esperara.
+    j["fondoSuperior"] = {a.fondoSuperior[0], a.fondoSuperior[1], a.fondoSuperior[2]};
+    j["fondoInferior"] = {a.fondoInferior[0], a.fondoInferior[1], a.fondoInferior[2]};
+    j["radioDifuminado"] = a.radioDifuminado;
     return j;
 }
 
@@ -102,10 +120,68 @@ Apariencia ConfigPersistence::jsonToApariencia(const nlohmann::json& j) {
             if (j["acento"][i].is_number())
                 a.acento[i] = j["acento"][i].get<float>();
     }
-    if (j.contains("fondo") && j["fondo"].is_array() && j["fondo"].size() == 3) {
+    // Leemos primero los nuevos campos; si no existen, caemos en el antiguo
+    // "fondo" (un solo color para todo el fondo) y lo copiamos a ambos
+    // (compatibilidad hacia atras; esa clave es de solo lectura, no se vuelve a
+    // escribir).
+    bool tieneSuperior = false, tieneInferior = false;
+    if (j.contains("fondoSuperior") && j["fondoSuperior"].is_array() && j["fondoSuperior"].size() == 3) {
         for (int i = 0; i < 3; ++i)
-            if (j["fondo"][i].is_number())
-                a.fondo[i] = j["fondo"][i].get<float>();
+            if (j["fondoSuperior"][i].is_number())
+                a.fondoSuperior[i] = j["fondoSuperior"][i].get<float>();
+        tieneSuperior = true;
+    }
+    if (j.contains("fondoInferior") && j["fondoInferior"].is_array() && j["fondoInferior"].size() == 3) {
+        for (int i = 0; i < 3; ++i)
+            if (j["fondoInferior"][i].is_number())
+                a.fondoInferior[i] = j["fondoInferior"][i].get<float>();
+        tieneInferior = true;
+    }
+    if (!tieneSuperior || !tieneInferior) {
+        if (j.contains("fondo") && j["fondo"].is_array() && j["fondo"].size() == 3) {
+            for (int i = 0; i < 3; ++i)
+                if (j["fondo"][i].is_number()) {
+                    if (!tieneSuperior) a.fondoSuperior[i] = j["fondo"][i].get<float>();
+                    if (!tieneInferior) a.fondoInferior[i] = j["fondo"][i].get<float>();
+                }
+        }
+    }
+
+    // Los colores del cielo se respetan tal como quedaron guardados: cualquier
+    // valor que el usuario haya elegido con el selector es valido, incluidos los
+    // cielos claros. Solo se acota lo que no puede venir de la interfaz y
+    // romperia el degradado: componentes no finitos o fuera de [0, 1].
+    auto acotarCielo = [](float c[3]) {
+        for (int i = 0; i < 3; ++i) {
+            if (!std::isfinite(c[i])) {
+                c[i] = 0.0f;
+            } else if (c[i] < 0.0f) {
+                c[i] = 0.0f;
+            } else if (c[i] > 1.0f) {
+                c[i] = 1.0f;
+            }
+        }
+    };
+    acotarCielo(a.fondoSuperior);
+    acotarCielo(a.fondoInferior);
+
+    // Radio del difuminado...
+    // por defecto, que es el que venia implicito en las constantes de la grilla.
+    // Un valor fuera de rango o no finito (editado a mano, corrupto) se acota
+    // al rango admitido para que el perfil en memoria sea siempre valido, igual
+    // que si el usuario lo hubiera movido con el slider.
+    if (j.contains("radioDifuminado") && j["radioDifuminado"].is_number()) {
+        const float radio = j["radioDifuminado"].get<float>();
+        if (!std::isfinite(radio) ||
+            radio < AparienciaUtil::kRadioDifuminadoMinimo) {
+            a.radioDifuminado = radio < AparienciaUtil::kRadioDifuminadoMinimo
+                                    ? AparienciaUtil::kRadioDifuminadoMinimo
+                                    : AparienciaUtil::kRadioDifuminadoPorDefecto;
+        } else if (radio > AparienciaUtil::kRadioDifuminadoMaximo) {
+            a.radioDifuminado = AparienciaUtil::kRadioDifuminadoMaximo;
+        } else {
+            a.radioDifuminado = radio;
+        }
     }
     return a;
 }
@@ -183,6 +259,9 @@ ConfigPersistence::Proyecto ConfigPersistence::cargarProyecto(const std::string&
             p.gizmoGlobal = ed["gizmoGlobal"].get<bool>();
         if (ed.contains("camaraActivaId") && ed["camaraActivaId"].is_number_integer())
             p.camaraActivaId = ed["camaraActivaId"].get<int>();
+        // Dimension: ausente o no entero -> 3D (proyectos previos al campo).
+        if (ed.contains("dimension") && ed["dimension"].is_number_integer())
+            p.dimension = dimensionProyectoDesdeEntero(ed["dimension"].get<int>());
         if (ed.contains("ventanas") && ed["ventanas"].is_object()) {
             for (auto it = ed["ventanas"].begin(); it != ed["ventanas"].end(); ++it) {
                 if (it.value().is_boolean())
@@ -202,6 +281,7 @@ void ConfigPersistence::guardarProyecto(const Proyecto& p, const std::string& no
     j["editor"]["gizmoOperacion"] = p.gizmoOperacion;
     j["editor"]["gizmoGlobal"] = p.gizmoGlobal;
     j["editor"]["camaraActivaId"] = p.camaraActivaId;
+    j["editor"]["dimension"] = dimensionProyectoAEntero(p.dimension);
     for (const auto& [nombre, abierta] : p.estadoVentanas)
         j["editor"]["ventanas"][nombre] = abierta;
     escribirJson(rutaReal, j);

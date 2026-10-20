@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@
 #include "../Assets/AssimpMeshLoader.h"
 #include "Configuracion/EditorConfig.h"
 #include "../ExcepcionesCPP/RuntimeException.h"
+#include "../Diagnosticos/RegistroDiagnosticos.h"
 
 Modelos3D::Modelos3D(Entity* origin) : GameObject(origin) {}
 Modelos3D::Modelos3D() : GameObject() {}
@@ -51,10 +52,22 @@ void Modelos3D::setObject() {
         mesh_ = assets_ ? assets_->getMesh(filePath_)
                         : AssimpMeshLoader().load(filePath_);
     } catch (const RuntimeException& e) {
+        if (diagnosticos_) {
+            registrarExcepcionDiagnostica(
+                *diagnosticos_, "Objetos/Modelos3D", e,
+                NivelDiagnostico::Error, "malla:" + filePath_);
+        } else {
+            registrarExcepcionDiagnostica(
+                "Objetos/Modelos3D", e, NivelDiagnostico::Error,
+                "malla:" + filePath_);
+        }
         std::cerr << "Modelos3D: no se pudo cargar malla '" << filePath_
                   << "': " << e.what() << '\n';
         mesh_.reset();
     } catch (const std::exception& e) {
+        registrarExcepcionDiagnostica("Objetos/Modelos3D", e,
+                                      NivelDiagnostico::Error,
+                                      "malla:" + filePath_);
         std::cerr << "Modelos3D: error inesperado al cargar '" << filePath_
                   << "': " << e.what() << '\n';
         mesh_.reset();
@@ -97,10 +110,10 @@ void Modelos3D::deserializeEntity() {
     }
 }
 
-void Modelos3D::saveEntity(std::string filename) {
+bool Modelos3D::saveEntity(std::string filename) {
     const std::string path = filename + "/ObjectN" + std::to_string(getId()) + ".db";
     myBinario = std::make_unique<Binario>(path);
-    myBinario->ofOpenBinary();
+    if (!myBinario->ofOpenBinary()) return false;
 
     // El indice de la escena (SceneBBDDObjetos.txt) lo escribe en exclusiva
     // SceneSerializer::savePreOrder. Historicamente esta funcion lo re-leia y
@@ -108,15 +121,17 @@ void Modelos3D::saveEntity(std::string filename) {
     GameObject::serializeEntity();
     serializeEntity();
     myBinario->ofCloseBinary();
+    return true;
 }
 
-void Modelos3D::loadEntity(std::string filename) {
+bool Modelos3D::loadEntity(std::string filename) {
     const std::string path = filename + "/ObjectN" + std::to_string(getId()) + ".db";
     myBinario = std::make_unique<Binario>(path);
-    myBinario->ifOpenBinary();
+    if (!myBinario->ifOpenBinary()) return false;
     GameObject::deserializeEntity();
     deserializeEntity();
     myBinario->ifCloseBinary();
+    return true;
 }
 
 bool Modelos3D::getBoundingBox(vec3& outMin, vec3& outMax) const {

@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 
 #include "ProjectPaths.h"
 #include "Apariencia.h"
+#include "DimensionProyecto.h"
 
 // Persistencia JSON pura: carga/guarda datos de configuración general y de proyecto.
 // Sin estado runtime, sin lógica de migración, sin discovery de proyectos.
@@ -41,11 +42,14 @@ public:
     };
 
     struct Proyecto {
-        int version = 2;
+        int version = 3;
         bool ventanaCamarasAbierta = true;
         int gizmoOperacion = 7;
         bool gizmoGlobal = false;
         int camaraActivaId = -1;
+        // Dimension del proyecto (2D/3D). Se decide al crear el proyecto y no
+        // cambia; un proyecto previo a este campo se lee como 3D.
+        DimensionProyecto dimension = DimensionProyecto::TresD;
         // estadoVentanas: WindowName -> abierto. Vive en el propio struct para
         // que guardarProyecto/cargarProyecto manejen el JSON completo: con la
         // serializacion en un metodo aparte, guardarProyecto reescribia el

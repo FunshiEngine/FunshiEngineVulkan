@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,7 +61,9 @@ enum class TagTipo : uint8_t {
     Grupo,     // struct anidado reflejado
     Grupos,    // std::vector<struct> reflejado
     Objeto,    // GameObject* (guardado como nombre)
-    Objetos    // std::vector<GameObject*> (guardado como nombres)
+    Objetos,   // std::vector<GameObject*> (guardado como nombres)
+    Componente // puntero a un componente de otro objeto (guardado como nombre
+               // del objeto dueño + tipo de componente)
 };
 
 const char* nombreDeTag(TagTipo tag);
@@ -98,6 +100,11 @@ struct ValorCampo {
 struct DefCampo {
     std::string nombre;
     TagTipo tag = TagTipo::Entero;
+
+    // Solo para TagTipo::Componente: nombre del tipo de componente referenciado
+    // (p. ej. "InterfaceComponent"). El motor lo usa para resolver el puntero al
+    // componente de un objeto por su tipo.
+    std::string tipoComponente;
 
     // Devuelve un puntero al dato del campo dentro de `instancia`.
     // Para Grupo apunta al struct anidado; para Grupos al std::vector<S>;
@@ -150,6 +157,24 @@ std::vector<ValorCampo> cargarValoresCampos(std::ifstream& in);
 // tiene acceso a la escena actual (GameScene) antes de inyectar campos/objeto.
 using ResolverObjeto = std::function<GameObject*(const std::string& nombre)>;
 void fijarResolverObjetos(ResolverObjeto resolver);
+
+// Resolucion de referencias a COMPONENTES de otro objeto (TagTipo::Componente).
+// A diferencia de GameObject*, un componente no tiene un nombre propio ni un
+// back-pointer a su dueño, asi que la reflexion necesita dos direcciones:
+//   - resolver: (nombre del objeto dueño, tipo de componente) -> puntero al
+//     componente (o nullptr si el objeto no existe o no tiene ese componente).
+//   - dueno:    (puntero al componente, tipo) -> nombre del objeto dueño (para
+//     capturar el valor al guardar). Cadena vacia si el componente no pertenece
+//     a ningun objeto de la escena actual.
+using ResolverComponente = std::function<void*(const std::string& nombreObjeto,
+                                                const std::string& tipoComponente)>;
+using DuenoDeComponente = std::function<std::string(const void* componente,
+                                                    const std::string& tipoComponente)>;
+struct ResolverComponentes {
+    ResolverComponente resolver;
+    DuenoDeComponente dueno;
+};
+void fijarResolverComponentes(ResolverComponentes resolvers);
 
 // --- Construccion generica de DefCampo (usada por las macros REFLECT_*) ---
 
@@ -214,6 +239,24 @@ DefCampo crearCampo(const char* nombre, std::vector<T> C::* miembro) {
     DefCampo d;
     d.nombre = nombre;
     d.tag = tagDeLista<T>();
+    d.acceder = [miembro](void* instancia) -> void* {
+        C* c = static_cast<C*>(instancia);
+        return &(c->*miembro);
+    };
+    return d;
+}
+
+// Campo de referencia a un componente de otro objeto (miembro `T*`). El tipo se
+// declara por nombre (p. ej. "InterfaceComponent") para que la reflexion siga
+// siendo agnostica del tipo concreto; el motor resuelve el puntero por ese
+// nombre al inyectar/leer.
+template <class C, class T>
+DefCampo crearComponente(const char* nombre, T* C::* miembro,
+                         const char* tipoComponente) {
+    DefCampo d;
+    d.nombre = nombre;
+    d.tag = TagTipo::Componente;
+    d.tipoComponente = tipoComponente ? tipoComponente : "";
     d.acceder = [miembro](void* instancia) -> void* {
         C* c = static_cast<C*>(instancia);
         return &(c->*miembro);
@@ -286,6 +329,12 @@ DefCampo crearGrupos(const char* nombre, V C::* miembro,
         r.push_back(::ReflejoScripts::crearCampo(#M, &ClaseReflejada::M));
 
 #define REFLECT_ARRAY(M) REFLECT_CAMPO(M)
+
+// Referencia a un componente de otro objeto (miembro `T*`). El segundo argumento
+// es el nombre del tipo de componente que el motor sabe resolver.
+#define REFLECT_COMPONENTE(M, TIPO) \
+        r.push_back(::ReflejoScripts::crearComponente( \
+            #M, &ClaseReflejada::M, TIPO));
 
 #define REFLECT_GRUPO(M) \
         r.push_back(::ReflejoScripts::crearGrupo( \

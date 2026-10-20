@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,7 @@
 */
 // Pruebas headless de EditorEventBus (el canal tipado de GUI interna):
 // subscribe/publish/unsubscribe con payload declarativo y varios suscriptores.
-// Sin pila grafica: solo std C++17 (EditoreventBus no toca ImGui/OpenGL).
+// Sin pila grafica: solo std C++17 (EditoreventBus no toca ImGui ni la API grafica).
 
 #include <iostream>
 #include <string>
@@ -48,7 +48,8 @@ int main() {
         ap.temaClaro = true;
         ap.blancoYNegro = true;
         ap.acento[0] = 0.5f;
-        ap.fondo[2] = 0.75f;
+        ap.fondoSuperior[2] = 0.75f;
+        ap.fondoInferior[2] = 0.75f;
 
         bool recibido = false;
         EditorEventType tipoRecibido = EditorEventType::VentanaEstadoCambio;
@@ -70,7 +71,10 @@ int main() {
         CHECK(capturada.temaClaro == ap.temaClaro, "payload temas");
         CHECK(capturada.blancoYNegro == ap.blancoYNegro, "payload B/N");
         CHECK(capturada.acento[0] == ap.acento[0], "payload acento");
-        CHECK(capturada.fondo[2] == ap.fondo[2], "payload fondo");
+        CHECK(capturada.fondoSuperior[2] == ap.fondoSuperior[2],
+              "payload fondoSuperior");
+        CHECK(capturada.fondoInferior[2] == ap.fondoInferior[2],
+              "payload fondoInferior");
     }
 
     // 2. Varios suscriptores reciben todos la misma publicacion.

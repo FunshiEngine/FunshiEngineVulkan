@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,18 +20,25 @@
 #define SCENERENDERER_H
 
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "Backend/IRenderBackend.h"
+#include "Cielo.h"
 #include "GrillaRenderer.h"
 #include "GuiaEje.h"
+#include "SpriteRenderer.h"
+#include "TilemapRenderer.h"
 
 // Clases de otras capas que la pasada de render necesita (solo data CPU).
 class GameObject;
 class CameraComponent;
 class RenderTarget;
 class TextureManager;
+class ShaderProgram;
 struct Apariencia;
 struct LightData;
+class Skybox;
 
 template <typename T>
 class ListaDE;
@@ -45,6 +52,9 @@ class ListaDE;
 // MeshRenderer (pipeline moderno VBO/VAO + shader), de la grilla y de los
 // RenderTarget utilizados por las vistas previas. Ningun GL vive aqui: todo
 // pasa por IRenderBackend.
+// Forward declaration del AssetManager global (en namespace global)
+class AssetManager;
+
 class SceneRenderer {
 public:
     SceneRenderer();
@@ -56,11 +66,15 @@ public:
 
     // Datos CPU de la pasada que el renderer necesita de la escena. Los punteros
     // apuntan a memoria del llamador y solo valen durante render().
+// Forward declaration del AssetManager global (en namespace global)
+class AssetManager;
+
     struct FrameContext {
         ListaDE<GameObject*>* gameObjects = nullptr;
         const Apariencia* apariencia = nullptr;
+        ::AssetManager* assetManager = nullptr;
         float deltaTime = 0.0f;
-        bool editorActivo = false;
+        bool mostrarVisualesDepuracion = true;
         GameObject* selectedObject = nullptr;
         // Luces ya recogidas (LightSystem::collectLights) con el modelo global.
         const LightData* lights = nullptr;
@@ -78,6 +92,11 @@ public:
         // LOCAL/GLOBAL del gizmo (tecla G): en true la recta sigue el eje del
         // mundo, en false el eje local rotado del objeto.
         bool guiaCoordenadasGlobales = true;
+        // Proyecto 2D: el plano de juego es el XY. La pasada omite el cielo
+        // degradado/cubemap (el fondo queda del color de limpieza) y el
+        // difuminado por distancia (en ortografica el horizonte de la grilla no
+        // aplica: la vista no converge).
+        bool modo2D = false;
     };
 
     // Renderiza las vistas previas y la pasada principal de la escena desde la
@@ -114,8 +133,42 @@ private:
     void dibujarObjectConOjo(const FrameContext& ctx, GameObject* object,
                              GameObject* camaraOjo, const float view[16],
                              const float projection[16]);
+    // Pasada de sprites 2D: recoge los objetos con componente SpriteRenderer,
+    // los ordena por la Z de su Transform (atras->adelante) y los dibuja con
+    // blend activo y sin escritura de profundidad. Va despues de las mallas 3D
+    // para que un sprite no quede tapado por el estado del pipeline anterior.
+    void dibujarSprites(const FrameContext& ctx, const float view[16],
+                        const float projection[16]);
+    // Pasada de tilemaps 2D: recoge los objetos con componente Tilemap, ordena
+    // por la Z de su Transform (atras->adelante) y dibuja la malla horneada de
+    // cada uno (un draw call por atlas) con blend activo y sin escritura de
+    // profundidad. Va antes de los sprites para que estos queden por encima.
+    void dibujarTilemaps(const FrameContext& ctx, const float view[16],
+                         const float projection[16]);
     void dibujarMarcadorLuz(GameObject* object);
     void dibujarMarcadorCamara(GameObject* object);
+    // Cielo degradado (fullscreen triangle): se dibuja ANTES que la grilla y
+    // los objetos, con depth test habilitado y depth mask deshabilitado, para
+    // que quede "detras" de todo sin escribir profundidad. El color sale de la
+    // direccion de vista de cada pixel, asi que el cielo acompanha a la camara
+    // (mirar abajo da el color inferior, arriba el superior, y el horizonte
+    // queda en la transicion) en vez de quedar clavado a la pantalla.
+    void dibujarCielo(const FrameContext& ctx, const float view[16],
+                      const float projection[16], const float camaraMundo[3]);
+    // Skybox cubemap: se dibuja en lugar del degradado si hay un componente
+    // Skybox visible con 6 caras validas. Mismo estado de depth que el cielo.
+    //
+    // Dibuja el cubemap del Skybox alrededor de la camara. Devuelve si se
+    // dibujo de verdad: cuando no hay cubemap utilizable (falta una cara, no
+    // decodifica, el backend no crea la textura o no hay malla) el llamador
+    // tiene que caer al degradado. Antes devolvia void y el llamador hacia
+    // return igual, con lo que esos casos dejaban el fondo en negro.
+    bool dibujarSkyboxCubemap(const Skybox* skybox, const float view[16],
+                              const float projection[16]);
+    // Sube a GPU las 6 caras dadas y deja el handle en skyboxCubemap_. Devuelve
+    // false si alguna cara no se pudo decodificar o la textura no se pudo crear;
+    // en ese caso no queda nada cacheado y la pasada cae al degradado.
+    bool cargarCubemap(const std::string rutas[6]);
     // Recta de la guia de eje (X/Y/Z) sobre el objeto seleccionado: va hasta el
     // horizonte con el difuminado de la grilla y el color del eje.
     void dibujarGuiaEje(const FrameContext& ctx, const float camaraMundo[3]);
@@ -123,9 +176,45 @@ private:
                              const float camaraMundo[3]);
     void dibujarGrilla(const FrameContext& ctx, GameObject* object,
                        const float camaraMundo[3]);
+    // Radio del difuminado del piso para este frame: el que eligio el usuario
+    // en Opciones (Apariencia::radioDifuminado), acotado por el propio Difuminado
+    // y con el valor por defecto si la pasada no trae perfil de apariencia. Lo
+    // los leen la grilla, la guia de eje y el far plane efectivo de camara.
+    static float radioDifuminado(const FrameContext& ctx);
+    // Color contra el que se mide el contraste de la guia de eje: el color
+    // EFECTIVO de la grilla del suelo (el mismo que usa su propio dibujado, con
+    // el modo blanco y negro ya resuelto) y, cuando no hay grilla visible, el
+    // fondo del viewport. Devuelve false si la pasada no trae perfil de
+    // apariencia.
+    bool colorReferenciaGuia(const FrameContext& ctx, float out[3]) const;
 
     std::unique_ptr<class MeshRenderer> meshRenderer_;
     GrillaRenderer grillaRenderer_;
+    // Pasada de sprites 2D (componente SpriteRenderer): mismo pipeline moderno
+    // sobre su propio shader y malla de quad.
+    Rendering::SpriteRenderer spriteRenderer_;
+    // Pasada de tilemaps 2D (componente Tilemap): sube una malla horneada por
+    // tilemap y la reutiliza hasta que cambia su revision.
+    Rendering::TilemapRenderer tilemapRenderer_;
+    // Programas del cielo: el del degradado (triangulo a pantalla completa) y el
+    // del cubemap del componente Skybox. Se crean en la primera pasada que los
+    // necesita y se reusan: ShaderProgram cachea las locations de los uniforms
+    // (buscarlas por pasada era trabajo repetido) y libera el handle al
+    // destruirse. El flag de fallo evita reintentar compilar un shader roto
+    // frame a frame (el texto de origen no cambia, no puede pasar de rojo a
+    // verde) y con el, tambien, repetir su mensaje de error.
+    std::unique_ptr<ShaderProgram> cieloProgram_;
+    bool cieloShaderFallado_ = false;
+    std::unique_ptr<ShaderProgram> skyboxProgram_;
+    bool skyboxShaderFallado_ = false;
+    // Cubemap cacheado del componente Skybox: la textura GPU, la malla del cubo
+    // y la clave (rutas + fechas de modificacion de las 6 caras) que valido la
+    // textura. Se sube una sola vez por conjunto de caras y se reemplaza solo si
+    // cambia algun archivo; la malla del cubo no depende de las caras y se crea
+    // una sola vez. Se liberan en destruir().
+    Rendering::Backend::Handle skyboxCubemap_ = Rendering::Backend::kInvalidHandle;
+    Rendering::Backend::Handle skyboxCuboMalla_ = Rendering::Backend::kInvalidHandle;
+    std::string skyboxClave_;
     // Batch de lineas compartido por los marcadores de luz y de camara (ambos
     // son 12 aristas): se sube y se dibuja por gizmo, en un solo draw cada uno.
     LineBatch marcadoresBatch_;

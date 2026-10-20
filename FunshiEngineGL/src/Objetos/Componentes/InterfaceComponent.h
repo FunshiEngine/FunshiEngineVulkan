@@ -1,5 +1,5 @@
 /*
-    FunshiEngineGL - Motor de juegos 3D con OpenGL e ImGui
+    FunshiEngineGL - Motor de juegos 3D con API grafica intercambiable e ImGui
     Copyright 2026 Gianfranco Ivan Enrique
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,16 +21,43 @@
 
 #include "Component.h"
 
+#include <glm/glm.hpp>
+
+#include <cstdint>
 #include <string>
 
-// Interfaz de usuario del JUGADOR como Component: se adjunta a un GameObject
-// y, al entrar en modo play, la escena muestra esa interfaz a pantalla
-// completa delante de la camara principal (HUD del juego). Como los clips de
-// sonido, la interfaz se referencia por NOMBRE: el nombre del asset JSON en
-// Memory/Interfaces/<nombre>.json del proyecto.
+// Anclaje de la interfaz respecto al area de juego (las 9 posiciones: tres
+// columnas por tres filas). El ancla fija contra que borde o esquina se mide
+// `desplazamiento`; `tamano` (auto segun el CSS del HTML o fijo) y `z` (orden
+// de apilado entre interfaces) completan la colocacion. El valor numerico es
+// el que se serializa, asi que el orden de los enumeradores no debe cambiarse.
+enum class AnclaInterfaz : std::uint8_t {
+    ArribaIzquierda = 0,
+    ArribaCentro,
+    ArribaDerecha,
+    MedioIzquierda,
+    Centro,
+    MedioDerecha,
+    AbajoIzquierda,
+    AbajoCentro,
+    AbajoDerecha
+};
+
+// Interfaz de usuario del JUGADOR como Component: se adjunta a un GameObject y,
+// al entrar en modo play, la escena muestra esa interfaz (HUD) delante de la
+// camara principal. La interfaz es un archivo .html (que referencia su CSS y su
+// JS por rutas relativas) del proyecto; el componente guarda su ruta y su
+// colocacion. Una escena puede tener varias interfaces: se dibujan las activas
+// ordenadas por `z`.
 class InterfaceComponent : public Component {
 private:
-    std::string interfaz; // nombre del asset de interfaz; vacio = ninguna
+    std::string rutaHtml; // ruta al .html; vacio = ninguna
+    bool activo = true;
+    AnclaInterfaz ancla = AnclaInterfaz::Centro;
+    glm::vec2 desplazamiento{0.0f, 0.0f};
+    bool tamanoAuto = true;       // true: el tamano lo fija el CSS del HTML
+    glm::vec2 tamano{0.0f, 0.0f}; // usado cuando tamanoAuto == false
+    float z = 0.0f;               // orden de apilado entre interfaces
 
 protected:
     void serializeComponent(std::ofstream* file) override;
@@ -42,8 +69,28 @@ public:
     void saveComponent(std::ofstream* file) override;
     void loadComponent(std::ifstream* file) override;
 
-    const std::string& getInterfaz() const noexcept { return interfaz; }
-    void setInterfaz(const std::string& nombre) noexcept { interfaz = nombre; }
+    const std::string& getRutaHtml() const noexcept { return rutaHtml; }
+    void setRutaHtml(const std::string& ruta) noexcept { rutaHtml = ruta; }
+
+    bool estaActiva() const noexcept { return activo; }
+    void setActivo(bool valor) noexcept { activo = valor; }
+
+    AnclaInterfaz getAncla() const noexcept { return ancla; }
+    void setAncla(AnclaInterfaz valor) noexcept { ancla = valor; }
+
+    const glm::vec2& getDesplazamiento() const noexcept { return desplazamiento; }
+    void setDesplazamiento(const glm::vec2& valor) noexcept {
+        desplazamiento = valor;
+    }
+
+    bool usaTamanoAuto() const noexcept { return tamanoAuto; }
+    void setTamanoAuto(bool valor) noexcept { tamanoAuto = valor; }
+
+    const glm::vec2& getTamano() const noexcept { return tamano; }
+    void setTamano(const glm::vec2& valor) noexcept { tamano = valor; }
+
+    float getZ() const noexcept { return z; }
+    void setZ(float valor) noexcept { z = valor; }
 };
 
 #endif // INTERFACECOMPONENT_H
