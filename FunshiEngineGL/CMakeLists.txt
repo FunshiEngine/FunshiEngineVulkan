@@ -375,10 +375,92 @@ if(BUILD_ENGINE)
 find_package(glfw3 REQUIRED)
 target_link_libraries(funshi_engine PRIVATE glfw)
 
-# El core no implementa ninguna API gráfica: el backend por defecto es el nulo
-# (Rendering/Backend/BackendNulo). Un repositorio que implemente una API
-# gráfica instala su backend con Backend::instalarBackend() y compila su
-# propio .cpp; aquí no hay nada que enlazar porque no hay driver que usar.
+# --- Backend de Vulkan --------------------------------------------------------
+#
+# Este repositorio implementa el backend de Vulkan del contrato de render, así
+# que la API gráfica sí está presente: la ventana se crea sin contexto
+# (GLFW_NO_API) y el backend crea la superficie.
+#
+# La librería de Vulkan se ENLAZA (no se carga en tiempo de ejecución): el
+# motor igual arranca en una máquina sin Vulkan, porque el backend consulta la
+# disponibilidad antes de inicializar y, si no hay, sigue con el backend nulo.
+option(FUNSHI_VULKAN "Compilar el backend de Vulkan" ON)
+
+if(FUNSHI_VULKAN)
+    find_package(Vulkan REQUIRED)
+    target_link_libraries(funshi_engine PRIVATE Vulkan::Vulkan)
+
+    # --- Shaders ---------------------------------------------------------------
+    #
+    # El GLSL de los shaders vive en src/Rendering/BackendVulkan/Shaders y se
+    # compila a SPIR-V en tiempo de build (con glslc de shaderc o con
+    # glslangValidator). El binario se embebe en el ejecutable: en runtime no
+    # hace falta un compilador de shaders ni leer archivos.
+    set(FUNSHI_SHADERS_DIR ${SRC_DIR}/Rendering/BackendVulkan/Shaders)
+
+    find_program(FUNSHI_GLSLC NAMES glslc
+        HINTS ENV VULKAN_SDK
+        PATH_SUFFIXES bin)
+    find_program(FUNSHI_GLSLANG NAMES glslangValidator
+        HINTS ENV VULKAN_SDK
+        PATH_SUFFIXES bin)
+
+    if(FUNSHI_GLSLC)
+        set(FUNSHI_COMPILADOR_SHADERS glslc)
+    elseif(FUNSHI_GLSLANG)
+        set(FUNSHI_COMPILADOR_SHADERS glslangValidator)
+    else()
+        message(FATAL_ERROR
+            "FUNSHI_VULKAN=ON necesita un compilador de shaders a SPIR-V: "
+            "instala glslc (shaderc) o glslangValidator, o configura con "
+            "-DFUNSHI_VULKAN=OFF.")
+    endif()
+
+    file(GLOB FUENTES_SHADERS CONFIGURE_DEPENDS
+        "${FUNSHI_SHADERS_DIR}/*.vert"
+        "${FUNSHI_SHADERS_DIR}/*.frag")
+
+    set(ARCHIVOS_SPIRV)
+    foreach(fuente ${FUENTES_SHADERS})
+        get_filename_component(nombre ${fuente} NAME)
+        get_filename_component(etapa ${nombre} EXT)
+        string(REPLACE "." "" etapa ${etapa})
+        set(spv ${CMAKE_CURRENT_BINARY_DIR}/shaders/${nombre}.spv)
+        if(FUNSHI_COMPILADOR_SHADERS STREQUAL "glslc")
+            add_custom_command(
+                OUTPUT ${spv}
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                        ${CMAKE_CURRENT_BINARY_DIR}/shaders
+                COMMAND ${FUNSHI_GLSLC} -fshader-stage=${etapa}
+                        --target-env=vulkan1.1 -o ${spv} ${fuente}
+                DEPENDS ${fuente}
+                COMMENT "Compilando ${nombre} a SPIR-V")
+        else()
+            add_custom_command(
+                OUTPUT ${spv}
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                        ${CMAKE_CURRENT_BINARY_DIR}/shaders
+                COMMAND ${FUNSHI_GLSLANG} -S ${etapa} --target-env vulkan1.1
+                        -o ${spv} ${fuente}
+                DEPENDS ${fuente}
+                COMMENT "Compilando ${nombre} a SPIR-V")
+        endif()
+        list(APPEND ARCHIVOS_SPIRV ${spv})
+    endforeach()
+
+    set(ARCHIVO_SPIRV_GENERADO
+        ${CMAKE_CURRENT_BINARY_DIR}/ShadersSPIRV.generado.cpp)
+    add_custom_command(
+        OUTPUT ${ARCHIVO_SPIRV_GENERADO}
+        COMMAND ${CMAKE_COMMAND}
+                "-DENTRADA=${ARCHIVOS_SPIRV}"
+                "-DSALIDA=${ARCHIVO_SPIRV_GENERADO}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerarShadersSPIRV.cmake
+        DEPENDS ${ARCHIVOS_SPIRV}
+                ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerarShadersSPIRV.cmake
+        COMMENT "Generando el SPIR-V embebido de los shaders")
+    target_sources(funshi_engine PRIVATE ${ARCHIVO_SPIRV_GENERADO})
+endif()
 
 # Bullet Physics
 find_package(Bullet REQUIRED)
