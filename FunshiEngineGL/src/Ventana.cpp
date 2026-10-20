@@ -163,7 +163,10 @@ int Ventana::initVentana() {
     // draw seria una pantalla negra sin explicacion. Los renderers igual
     // consultan available() antes de su primer uso, pero llegar hasta aca sin
     // backend seria un fallo silencioso.
-    if (!Rendering::Backend::activeBackend().init()) {
+    //
+    // El backend recibe la ventana porque es quien crea la superficie sobre la
+    // que dibuja: la ventana ya no pide contexto grafico.
+    if (!Rendering::Backend::activeBackend().init(window)) {
         std::cerr << "[Ventana] El backend grafico no se pudo inicializar."
                   << std::endl;
         glfwDestroyWindow(window);

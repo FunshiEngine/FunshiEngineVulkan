@@ -21,10 +21,20 @@
 namespace Rendering {
 namespace Backend {
 
-bool BackendNulo::init() {
+bool BackendNulo::init(void* ventanaNativa) {
     // El motor arranca igual sin API grafica: no hay contexto que crear ni
-    // funciones que cargar, asi que la inicializacion es satisfactoria.
+    // funciones que cargar, asi que la inicializacion es satisfactoria. La
+    // ventana no se usa: sin API grafica no hay superficie que crear.
+    (void)ventanaNativa;
     return true;
+}
+
+void BackendNulo::beginFrame() {
+    // Sin API grafica no hay frame que abrir.
+}
+
+void BackendNulo::endFrame() {
+    // Sin API grafica no hay nada que enviar ni que mostrar.
 }
 
 bool BackendNulo::available() const {

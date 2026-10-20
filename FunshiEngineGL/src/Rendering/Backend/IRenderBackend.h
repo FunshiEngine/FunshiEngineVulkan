@@ -80,10 +80,30 @@ class IRenderBackend {
 public:
     virtual ~IRenderBackend() = default;
 
-    // Carga las funciones de GPU (por puntero, "same fashion as GLFW"). Devuelve
-    // false si el pipeline moderno no esta disponible.
-    virtual bool init() = 0;
+    // Prepara el backend para dibujar.
+    //
+    // ventanaNativa es el puntero opaco de la ventana del sistema (el
+    // GLFWwindow del motor). El backend lo necesita porque es quien crea la
+    // superficie sobre la que dibuja: con la ventana sin contexto grafico, la
+    // superficie la crea el backend y no hay otro modo de llegar a ella.
+    //
+    // Devuelve false si el backend no esta disponible (no hay API grafica en
+    // la maquina, no se pudo crear el dispositivo, ...). Devuelve true si el
+    // motor puede seguir: un backend que dibuja nada tambien puede arrancar.
+    virtual bool init(void* ventanaNativa) = 0;
     virtual bool available() const = 0;
+
+    // Limite de frame.
+    //
+    // beginFrame abre el frame: el backend prepara lo que necesita para
+    // dibujar en el (en una API con swapchain, la imagen siguiente). endFrame
+    // lo cierra: el backend envia lo dibujado y muestra el resultado.
+    //
+    // El motor no sabe nada de como se hace: el intercambio de buffers es un
+    // detalle de la API, no del motor. Por eso el limite de frame es parte
+    // del contrato y no un detalle del bucle principal.
+    virtual void beginFrame() = 0;
+    virtual void endFrame() = 0;
 
     // --- Malla GPU (VAO/VBO/EBO o su analogo nativo) -------------------------
     virtual Handle createMesh(const MeshData& data) = 0;

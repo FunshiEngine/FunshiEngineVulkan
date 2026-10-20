@@ -39,8 +39,12 @@ namespace Backend {
 // inexistentes.
 class BackendNulo : public IRenderBackend {
 public:
-    bool init() override;
+    bool init(void* ventanaNativa) override;
     bool available() const override;
+
+    // Limite de frame: sin API grafica no hay nada que abrir ni que cerrar.
+    void beginFrame() override;
+    void endFrame() override;
 
     // Malla GPU.
     Handle createMesh(const MeshData& data) override;

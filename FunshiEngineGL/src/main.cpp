@@ -618,6 +618,12 @@ static int EjecutarMotor(int argc, char* argv[])
         // hasta un frame (~16ms) de latencia a la reaccion del editor.
         glfwPollEvents();
 
+        // Apertura del frame: el backend prepara lo que necesita para dibujar
+        // en el (en una API con swapchain, la imagen siguiente). Va despues de
+        // los eventos para que un redimensionado de la ventana se tenga en
+        // cuenta en el mismo frame.
+        Rendering::Backend::activeBackend().beginFrame();
+
 #ifdef FUNSHI_CEF
         // Bucle de mensajes del motor web (external_message_pump): una vez por
         // frame, en el hilo principal. Sin CEF es no-op.
@@ -790,7 +796,10 @@ static int EjecutarMotor(int argc, char* argv[])
         // Envio de los draw lists al backend de render de la interfaz.
         MotorImGui::render(ImGui::GetDrawData());
 
-        glfwSwapBuffers(window);
+        // Cierre del frame: el backend envia lo dibujado y muestra el
+        // resultado. El intercambio de buffers es un detalle de la API
+        // grafica, asi que lo hace el backend y no el motor.
+        Rendering::Backend::activeBackend().endFrame();
     }
 
     // Sin proyecto elegido (primer arranque cerrado desde el menu sin entrar

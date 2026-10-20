@@ -52,7 +52,10 @@ bool SpriteRenderer::inicializar() {
     if (shader_) return shader_->isValid();
     if (shaderFallado_) return false;
     auto& backend = Backend::activeBackend();
-    if (!backend.init()) return false;
+    // El backend tiene que estar disponible para poder dibujar: la
+    // inicializacion (que necesita la ventana) la hace la Ventana al
+    // arrancar.
+    if (!backend.available()) return false;
 
     try {
         shader_ = std::make_unique<ShaderProgram>(

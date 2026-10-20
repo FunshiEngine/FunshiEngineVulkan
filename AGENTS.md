@@ -273,7 +273,15 @@ Reglas que se sostienen en este repositorio:
   location. El motor solo lo reenvía a los `setUniform*`; `-1` significa que el
   programa no expone ese uniforme.
 - **La ventana no pide contexto gráfico**: se crea con `GLFW_NO_API` y la
-  superficie la crea el backend, que es quien sabe hacerlo.
+  superficie la crea el backend, que es quien sabe hacerlo. Por eso el backend
+  se inicializa con la ventana (`init(void* ventanaNativa)`), y ese arranque lo
+  hace `Ventana::initVentana()`.
+- **El límite de frame es del contrato**: `beginFrame()` y `endFrame()` abren y
+  cierran cada frame. El motor no llama a `glfwSwapBuffers`: el intercambio de
+  buffers es un detalle de la API gráfica, no del motor.
+- **`init()` es el arranque, `available()` es la consulta**: los renderers
+  preguntan `available()` antes de dibujar (no `init()`, que es de una sola vez
+  y necesita la ventana).
 - **El estado que la API exige para dibujar lo prepara el backend**, nunca el
   llamador (patrón documentado en `DocuTecnicoBugs.md`).
 - El test `contrato-render-tests` (`tests/ContratoRenderTests.cpp`) verifica el

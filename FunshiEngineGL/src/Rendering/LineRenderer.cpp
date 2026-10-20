@@ -69,7 +69,10 @@ void LineRenderer::setHorizonteVisual(float inicio, float fin) noexcept {
 
 bool LineRenderer::inicializar() {
     if (shader_) return shader_->isValid();
-    if (!Rendering::Backend::activeBackend().init()) return false;
+    // El backend tiene que estar disponible para poder dibujar: la
+    // inicializacion (que necesita la ventana) la hace la Ventana al
+    // arrancar.
+    if (!Rendering::Backend::activeBackend().available()) return false;
     try {
         shader_ = std::make_unique<ShaderProgram>(
             ShaderProgram::create(Rendering::Contrato::ShaderKind::Lineas));

@@ -462,7 +462,8 @@ FunshiEngineGL/                          ← raíz del repo
 
 ```text
 main.cpp
-  ├── Ventana (GLFW init: ventana y eventos, sin contexto gráfico)
+  ├── Ventana (GLFW init: ventana y eventos, sin contexto gráfico;
+  ─   ─   arranca el backend gráfico con la ventana: es quien crea la superficie)
   ├── ImGui init (backend glfw + fachada de render; imgui.ini gestionado por el gestor)
   ├── GUIManager (crea el menú y las ventanas; posee FileManager)
   ├── GameScene(guiManager)
@@ -494,7 +495,7 @@ main.cpp
       │   simulación; E solo oculta paneles, y las ventanas flotantes se
       │   reanclan a su último dock válido sin reconstruir los splits
       ├── GestorDeProyectos::sincronizar/eliminar (cambios de proyecto desde el menú)
-      ├── ImGui::Render + swap buffers
+      ├── ImGui::Render + cierre del frame (el backend envía y muestra)
       └── al salir: GestorDeProyectos::guardarProyectoCompleto (escena + config)
 ```
 
@@ -979,7 +980,7 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
   tema resueltos; y la identidad del cubemap del Skybox (`CacheCubemap`): la
   clave que decide cada cuanto volver a subirlo a GPU cambia solo si cambia una
   ruta o su fecha de modificación. Solo CPU, sin pila gráfica.
-- `contrato-render-tests` (571): el contrato de render. La tabla de uniforms
+- `contrato-render-tests` (575): el contrato de render. La tabla de uniforms
   por tipo de programa (`ContratoRender.h`) es completa, no repite nombres y
   no declara ninguno que no exista en el namespace de uniforms; cada tipo
   expone los uniforms que su semántica exige (el difuminado radial de las
@@ -989,7 +990,9 @@ headless** registrados en CTest (`scripts-java-tests` solo se registra con
   cumple el contrato entero sin dibujar (todo handle inválido, ningún
   localizador de uniform, diagnóstico de GPU presente) y el motor arranca y
   omite las pasadas; y el backend se puede instalar y reemplazar, con el motor
-  pidiendo los programas por tipo. No hay GPU: el backend de mentira solo
+  pidiendo los programas por tipo. El límite de frame también es del contrato:
+  el backend se inicializa con la ventana nativa, y `beginFrame`/`endFrame`
+  abren y cierran cada frame. No hay GPU: el backend de mentira solo
   registra las llamadas, así que el resultado no depende del driver.
 - `scripts-tests` (173): reflexión `SerializeField` (escalares, arrays, grupos
   anidados y referencias a componentes por `REFLECT_COMPONENTE`, con su

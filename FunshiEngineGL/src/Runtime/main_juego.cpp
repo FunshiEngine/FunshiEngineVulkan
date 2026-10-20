@@ -241,6 +241,10 @@ int EjecutarJuego(int argc, char* argv[]) {
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+
+        // Apertura del frame: el backend prepara lo que necesita para dibujar
+        // en el (en una API con swapchain, la imagen siguiente).
+        Rendering::Backend::activeBackend().beginFrame();
 #ifdef FUNSHI_CEF
         WebUIRuntime::bombear();
 #endif
@@ -264,7 +268,10 @@ int EjecutarJuego(int argc, char* argv[]) {
         ImGui::Render();
         MotorImGui::render(ImGui::GetDrawData());
 
-        glfwSwapBuffers(window);
+        // Cierre del frame: el backend envia lo dibujado y muestra el
+        // resultado. El intercambio de buffers es un detalle de la API
+        // grafica, asi que lo hace el backend y no el motor.
+        Rendering::Backend::activeBackend().endFrame();
     }
 
     // 14. Cleanup ordenado (igual que main.cpp, sin GUIManager)

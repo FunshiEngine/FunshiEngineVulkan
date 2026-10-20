@@ -414,7 +414,7 @@ void testRenderersUsanElContrato() {
 void testBackendNuloCumpleElContrato() {
     Backend::BackendNulo nulo;
 
-    CHECK(nulo.init(), "el backend nulo deja arrancar el motor");
+    CHECK(nulo.init(nullptr), "el backend nulo deja arrancar el motor");
     CHECK(!nulo.available(), "el backend nulo no declara gpu disponible");
 
     Backend::MeshData malla;
@@ -470,6 +470,12 @@ void testBackendNuloCumpleElContrato() {
     nulo.drawMesh(kInvalidHandle, 0);
     nulo.drawLineBatch(kInvalidHandle, 0);
     CHECK(true, "el estado y el dibujado sin gpu no fallan");
+
+    // El limite de frame tambien se cumple sin gpu: el motor lo llama en
+    // cada vuelta del bucle y no puede romperse por no haber API grafica.
+    nulo.beginFrame();
+    nulo.endFrame();
+    CHECK(true, "abrir y cerrar el frame sin gpu no falla");
 }
 
 // --- 5. El backend se instala, se reemplaza y el motor pide por tipo -------
@@ -484,6 +490,8 @@ public:
     std::vector<std::string> uniformesConsultados;
     std::vector<int> uniformesEscritos;
     int programasDestruidos = 0;
+    int framesAbiertos = 0;
+    int framesCerrados = 0;
 
     explicit BackendFalso(std::set<std::string> uniforms = {})
         : uniformesConocidos(std::move(uniforms)) {
@@ -491,8 +499,11 @@ public:
     }
     ~BackendFalso() override { --instanciasVivas; }
 
-    bool init() override { return true; }
+    bool init(void*) override { return true; }
     bool available() const override { return true; }
+
+    void beginFrame() override { ++framesAbiertos; }
+    void endFrame() override { ++framesCerrados; }
 
     Handle createMesh(const Backend::MeshData&) override { return 1; }
     void destroyMesh(Handle) override {}
@@ -599,6 +610,27 @@ void testInstalarBackendReemplazaElActivo() {
           "instalar el backend nulo restaura el backend en blanco");
 }
 
+void testElLimiteDeFrameEsParteDelContrato() {
+    Backend::instalarBackend(nullptr);
+    auto falso = std::make_unique<BackendFalso>();
+    BackendFalso* observed = falso.get();
+    Backend::instalarBackend(std::move(falso));
+
+    // El backend se prepara con la ventana del sistema: es quien crea la
+    // superficie sobre la que dibuja.
+    CHECK(observed->init(nullptr),
+          "el backend se inicializa con la ventana nativa");
+
+    // El limite de frame es del contrato: el motor lo llama en cada vuelta
+    // del bucle y el backend tiene que poder cumplirlo.
+    observed->beginFrame();
+    CHECK(observed->framesAbiertos == 1, "el frame se abre");
+    observed->endFrame();
+    CHECK(observed->framesCerrados == 1, "el frame se cierra");
+
+    Backend::instalarBackend(nullptr);
+}
+
 void testElMotorPideLosProgramasPorTipo() {
     Backend::instalarBackend(nullptr);
     auto falso = std::make_unique<BackendFalso>(nombresDelContrato());
@@ -671,6 +703,7 @@ int main() {
     testBackendNuloCumpleElContrato();
     testBackendActivoPorDefectoEsElNulo();
     testInstalarBackendReemplazaElActivo();
+    testElLimiteDeFrameEsParteDelContrato();
     testElMotorPideLosProgramasPorTipo();
     testMotorSinBackendNoRompe();
 
