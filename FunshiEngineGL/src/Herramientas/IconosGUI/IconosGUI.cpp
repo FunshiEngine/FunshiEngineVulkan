@@ -101,7 +101,7 @@ void IconosGUI::init() {
     iconoStop = cargarPNG("GUI-Image/MenuBar/stop-button-white.png");
     // El logo guarda sus dimensiones para que los consumidores respeten la
     // proporcion del asset a cualquier alto de pantalla.
-    iconoLogo = cargarPNG("Logo/FunshiEngineGL_Isotipo_Blanco.png", &anchoLogo,
+    iconoLogo = cargarPNG("Logo/FunshiEngineVK_Isotipo_Blanco.png", &anchoLogo,
                           &altoLogo);
     if (altoLogo < 1) altoLogo = 1;
     // Iconos por extension de asset/formato (Imagenes/File-Image/ + nombre.png).

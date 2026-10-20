@@ -63,7 +63,7 @@ std::string directorioEjecutable() {
 // o un nivel arriba, y fallback relativo al cwd). El logo esta en
 // Imagenes/Logo/.
 std::string ubicarLogoVentana() {
-    const char* nombre = "Logo/FunshiEngineGL_Isotipo_Blanco.png";
+    const char* nombre = "Logo/FunshiEngineVK_Isotipo_Blanco.png";
     const std::string exeDir = directorioEjecutable();
     std::vector<std::string> carpetas;
     if (!exeDir.empty()) {

@@ -138,6 +138,12 @@ FunshiEngineGL/                          ← raíz del repo
     │                                      (IPhysicsBackend) y backends de scripts (C++/Java)
     │                                      siguen patrón Strategy.
     ├── Imagenes/                        ← íconos del explorador (cpp, cubo, file, folder, hpp)
+    │   └── Logo/                        ← isotipo (PNG/SVG), icono (.ico) y logo principal
+    │                                    (PNG/SVG). El wordmark del logo principal es un
+    │                                    <text> vivo en EB Garamond y el PNG es su
+    │                                    rasterizado (2000x2404): si se cambia el texto,
+    │                                    hay que re-rasterizar el PNG y volver a firmar el
+    │                                    manifiesto C2PA del SVG.
     ├── ImGuizmo/                        ← dependencia integrada (ImGuizmo.cpp/.h, etc.)
     ├── External/nlohmann/json.hpp       ← nlohmann/json vendoriado (EditorConfig)
 
