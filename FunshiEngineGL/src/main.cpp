@@ -48,7 +48,9 @@
 #include "../src/Ventana.h"
 #include "../src/Input/EditorInput.h"
 #include "../src/Rendering/Backend/IRenderBackend.h"
+#if FUNSHI_VULKAN
 #include "../src/Rendering/BackendVulkan/BackendVulkan.h"
+#endif
 #include "../src/Diagnosticos/RegistroDiagnosticos.h"
 #include "../src/ExcepcionesCPP/RuntimeException.h"
 #ifdef FUNSHI_CEF
@@ -307,12 +309,14 @@ static int EjecutarMotor(int argc, char* argv[])
     inicio.mensaje = "Editor iniciado";
     RegistroDiagnosticos::global().registrar(std::move(inicio));
 
+#if FUNSHI_VULKAN
     // El backend grafico se instala antes de crear la ventana: la ventana se
     // crea sin contexto (GLFW_NO_API) y es el backend el que crea la
     // superficie de Vulkan sobre ella. Si el backend no puede arrancar (no
     // hay Vulkan en la maquina), el motor sigue con el backend nulo.
     Rendering::Backend::instalarBackend(
         std::make_unique<Rendering::Backend::Vulkan::BackendVulkan>());
+#endif
 
     Ventana* auxVentana = new Ventana();
     auxVentana->initVentana();
