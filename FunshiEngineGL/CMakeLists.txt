@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.15)
 # que es lo que hace el workflow al publicar: así el número del .exe y el del
 # instalador salen del mismo tag, en vez de dos números escritos a mano que
 # nadie sincroniza.
-set(FUNSHI_VERSION "0.5.4" CACHE STRING "Versión del producto (X.Y.Z)")
+set(FUNSHI_VERSION "0.5.6" CACHE STRING "Versión del producto (X.Y.Z)")
 # C y CXX: el proyecto es C++, pero las distribuciones de CEF (cef_variables.cmake)
 # corren CHECK_C_COMPILER_FLAG en configure y CMake exige el lenguaje habilitado.
 project(FunshiEngineVK VERSION ${FUNSHI_VERSION} LANGUAGES C CXX)
@@ -52,6 +52,11 @@ list(REMOVE_ITEM SOURCES
 # El backend CEF exige C++20 (headers de CEF) y el motor compila en C++17, asi
 # que vive en su propia unidad/target (funshi_webui_cef) y no entra en la GLOB.
 list(REMOVE_ITEM SOURCES ${SRC_DIR}/WebUI/BackendCef.cpp)
+# stb_image (vendoriado en External/stb_image): decodificador de imagenes. Su
+# implementacion va en una unidad propia (fuera de src/) para que ningun modulo
+# del motor sea dueno de la libreria de terceros.
+list(APPEND SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/External/stb_image/stb_image_impl.cpp)
 add_library(funshi_project_core STATIC
     ${SRC_DIR}/Configuracion/ProjectManager.cpp
     ${SRC_DIR}/Configuracion/ProjectPaths.cpp)
@@ -69,6 +74,17 @@ else()
     target_link_libraries(funshi_diagnostics_core PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
+# miniz (vendoriado en External/miniz): biblioteca ZIP en C, sin dependencias.
+# La comparten la libreria del motor (sistema de mods) y los targets de test
+# headless que corren con BUILD_ENGINE=OFF. Se expone el directorio External
+# para incluirla como <miniz/miniz.h>, igual que nlohmann/json.
+add_library(funshi_miniz STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/External/miniz/miniz.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/External/miniz/miniz_tdef.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/External/miniz/miniz_tinfl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/External/miniz/miniz_zip.c)
+target_include_directories(funshi_miniz PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/External)
 
 
 # El motor se compila como libreria estatica (funshi_engine) y el ejecutable
@@ -117,7 +133,7 @@ if(BUILD_ENGINE)
 
     add_library(funshi_engine STATIC ${SOURCES} ${HEADERS})
     target_link_libraries(funshi_engine PUBLIC
-        funshi_project_core funshi_diagnostics_core)
+        funshi_project_core funshi_diagnostics_core funshi_miniz)
 
     if(NOT BUILD_RUNTIME)
     # Ejecutable principal (solo el entry point).
@@ -1226,6 +1242,326 @@ if(Threads_FOUND)
 endif()
 add_test(NAME audio-tests COMMAND audio-tests)
 
+# Reproductor de musica (GestorMusica) headless y portatil: la maquina de
+# estados del fundido cruzado, el paso automatico a la pista siguiente y el
+# bus se prueban con un backend de musica FALSO (sin audio ni hilo de trabajo).
+add_executable(musica-tests
+    ${SRC_DIR}/Audio/GestorMusica.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/MusicaTests.cpp
+)
+target_include_directories(musica-tests PRIVATE ${SRC_DIR})
+set_target_properties(musica-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME musica-tests COMMAND musica-tests)
+
+# Pool de hilos del motor (CPU puro): el pool ejecuta cada tarea exactamente
+# una vez, sobrevive a una tarea que lanza, drena lo pendiente al cerrar y
+# espera() no vuelve antes de tiempo.
+add_executable(hilos-tests
+    ${SRC_DIR}/Hilos/MotorHilos.cpp
+    ${SRC_DIR}/Hilos/HiloActual.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/HilosTests.cpp
+)
+target_include_directories(hilos-tests PRIVATE ${SRC_DIR})
+target_link_libraries(hilos-tests PRIVATE funshi_diagnostics_core)
+set_target_properties(hilos-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME hilos-tests COMMAND hilos-tests)
+
+# API de inspeccion de escena: conversiones texto <-> valor, catalogo de
+# propiedades de componentes, filtros, vistas y mutaciones con undo/redo.
+# Necesita funshi_engine (SceneRegistry/SceneSerializer/EditorController).
+add_executable(inspeccion-escena-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/InspeccionEscenaTests.cpp
+)
+target_include_directories(inspeccion-escena-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(inspeccion-escena-tests PRIVATE funshi_engine)
+set_target_properties(inspeccion-escena-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME inspeccion-escena-tests COMMAND inspeccion-escena-tests)
+set_tests_properties(inspeccion-escena-tests PROPERTIES TIMEOUT 60)
+
+# Nucleo del sistema de mods (.fmod): versiones semver minimas, esquema del
+# manifiesto, parseo, validacion, dependencias/conflictos y lectura desde disco.
+# Headless y sin GUI ni GLFW (solo nlohmann/json y miniz de External).
+add_executable(mods-tests
+    ${SRC_DIR}/Mods/ModVersion.cpp
+    ${SRC_DIR}/Mods/ManifiestoMod.cpp
+    ${SRC_DIR}/Mods/LectorZip.cpp
+    ${SRC_DIR}/Mods/GestorMods.cpp
+    ${SRC_DIR}/Mods/CargadorMods.cpp
+    ${SRC_DIR}/Mods/RegistroPanelesMods.cpp
+    ${SRC_DIR}/Mods/ServiciosMods.cpp
+    ${SRC_DIR}/Configuracion/ProjectPaths.cpp
+    ${SRC_DIR}/Configuracion/ProjectManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/ModsTests.cpp
+)
+target_link_libraries(mods-tests PRIVATE funshi_diagnostics_core funshi_miniz)
+target_include_directories(mods-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+)
+set_target_properties(mods-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME mods-tests COMMAND mods-tests)
+
+# Simulacion de particulas (CPU pura): emision, cono de dispersion, integracion,
+# muerte y presupuesto de particulas vivas. No toca Vulkan ni glm.
+add_executable(particulas-tests
+    ${SRC_DIR}/Particulas/SistemaParticulas.cpp
+    ${SRC_DIR}/Particulas/PerfilParticula.cpp
+    ${SRC_DIR}/Particulas/LectorPerfil.cpp
+    ${SRC_DIR}/Particulas/ParticulasBuilder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/ParticulasTests.cpp
+)
+target_include_directories(particulas-tests PRIVATE ${CMAKE_SOURCE_DIR}/External)
+set_target_properties(particulas-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME particulas-tests COMMAND particulas-tests)
+
+# Interfaz de juego nativa (CPU pura): colocacion de widgets (nueve anclajes),
+# busqueda por identificador, cambio de texto/visibilidad e interaccion raton.
+# No toca Vulkan ni glm.
+add_executable(interfaz-ui-tests
+    ${SRC_DIR}/UI/LienzoUI.cpp
+    ${SRC_DIR}/UI/SistemaUI.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/InterfazUITests.cpp
+)
+target_include_directories(interfaz-ui-tests PRIVATE ${CMAKE_SOURCE_DIR}/External)
+set_target_properties(interfaz-ui-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME interfaz-ui-tests COMMAND interfaz-ui-tests)
+
+# Pruebas headless de la exportacion de juegos: dialogo de exportacion y estado
+# (fase, resultado, mensaje) como reglas de dominio.
+add_executable(exportacion-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/ExportacionTests.cpp
+)
+target_include_directories(exportacion-tests PRIVATE
+    ${SRC_DIR}
+    ${SRC_DIR}/ImGui
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(exportacion-tests PRIVATE funshi_engine)
+set_target_properties(exportacion-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME exportacion-tests COMMAND exportacion-tests)
+
+# Importacion de archivos desde fuera del proyecto (arrastrados/pegados):
+# politica de no pisar, copia recursiva, parsers portapapeles (text/uri-list, DROPFILES).
+add_executable(importar-archivos-tests
+    ${SRC_DIR}/GestorDeArchivos/GestorDeArchivos.cpp
+    ${SRC_DIR}/GestorDeArchivos/File.cpp
+    ${SRC_DIR}/GestorDeArchivos/Carpeta.cpp
+    ${SRC_DIR}/FileManager/FileManager.cpp
+    ${SRC_DIR}/FileManager/FileSystemWatcher.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/ImportarArchivosTests.cpp
+)
+target_link_libraries(importar-archivos-tests PRIVATE funshi_diagnostics_core)
+target_include_directories(importar-archivos-tests PRIVATE ${SRC_DIR}/ImGui)
+set_target_properties(importar-archivos-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME importar-archivos-tests COMMAND importar-archivos-tests)
+
+# Separacion entre input del editor e interfaz (headless y portatil):
+# el modulo traduce eventos GLFW, estado via IEstadoInterfaz, dibujo en GUI.
+add_executable(editor-input-tests
+    ${SRC_DIR}/ImGui/imgui.cpp
+    ${SRC_DIR}/ImGui/imgui_draw.cpp
+    ${SRC_DIR}/ImGui/imgui_tables.cpp
+    ${SRC_DIR}/ImGui/imgui_widgets.cpp
+    ${SRC_DIR}/GUI/Estado/EstadoInterfazImGui.cpp
+    ${SRC_DIR}/GUI/Navegacion/SidebarOrbitaGUI.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/EditorInputTests.cpp
+)
+target_include_directories(editor-input-tests PRIVATE
+    ${SRC_DIR}
+    ${SRC_DIR}/ImGui
+    ${CMAKE_CURRENT_SOURCE_DIR}/ImGuizmo
+)
+set_target_properties(editor-input-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME editor-input-tests COMMAND editor-input-tests)
+
+# Iconos de componente: catalogo declara icono por tipo, imagen existe en disco,
+# regla resuelve por tipo/alias/prefijo MSVC.
+add_executable(iconos-componentes-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/IconosComponentesTests.cpp
+)
+target_include_directories(iconos-componentes-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(iconos-componentes-tests PRIVATE funshi_engine)
+set_target_properties(iconos-componentes-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME iconos-componentes-tests COMMAND iconos-componentes-tests)
+
+# Sistema de luces: recogida de luces de la escena y paralelismo lista luces/duenos.
+# Necesita funshi_engine (GameObject, Light, Transform).
+add_executable(iluminacion-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/IluminacionTests.cpp
+)
+target_include_directories(iluminacion-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+)
+target_link_libraries(iluminacion-tests PRIVATE funshi_engine)
+set_target_properties(iluminacion-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME iluminacion-tests COMMAND iluminacion-tests)
+
+# Primitivas 3D en CPU (geometria pura, sin Vulkan): esfera como muestra de material.
+add_executable(primitivas3d-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/Primitivas3DTests.cpp
+)
+target_include_directories(primitivas3d-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(primitivas3d-tests PRIVATE funshi_engine)
+set_target_properties(primitivas3d-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME primitivas3d-tests COMMAND primitivas3d-tests)
+
+# Regiones con material propio de una malla: importador guarda region (rango
+# indices + nombre material) por sub-malla. Carga .obj con dos materiales.
+add_executable(malla-regiones-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/MallaRegionesTests.cpp
+)
+target_include_directories(malla-regiones-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(malla-regiones-tests PRIVATE funshi_engine)
+set_target_properties(malla-regiones-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME malla-regiones-tests COMMAND malla-regiones-tests)
+
+# Materiales por region: componente Materiales guarda region por parte de malla
+# con su material, resolvedor decide que material se dibuja en cada region.
+add_executable(materiales-regiones-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/MaterialesRegionesTests.cpp
+)
+target_include_directories(materiales-regiones-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(materiales-regiones-tests PRIVATE funshi_engine)
+set_target_properties(materiales-regiones-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME materiales-regiones-tests COMMAND materiales-regiones-tests)
+
+# Lectura de datos serializados: longitudes y etiquetas controladas por archivo,
+# lectura se corta con error limpio si corruptas. Necesita funshi_engine
+# (componentes Script y AudioSource).
+add_executable(serializacion-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/SerializacionTests.cpp
+)
+target_include_directories(serializacion-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(serializacion-tests PRIVATE funshi_engine)
+set_target_properties(serializacion-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME serializacion-tests COMMAND serializacion-tests)
+
+# UIComponent (interfaz de juego nativa): lista widgets HUD y colocacion,
+# round-trip binario y payload corrupto acotado. Necesita funshi_engine.
+add_executable(ui-component-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/UIComponentTests.cpp
+)
+target_include_directories(ui-component-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+    ${CMAKE_SOURCE_DIR}/External/imgui
+)
+target_link_libraries(ui-component-tests PRIVATE funshi_engine)
+set_target_properties(ui-component-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME ui-component-tests COMMAND ui-component-tests)
+
+# WebUIRuntime (registro/seleccion/despacho) y VistasWebUI (ciclo de vida vistas)
+# corren con backend nulo, sin CEF ni GL. Compilan sueltos, necesitan glm.
+add_executable(webui-runtime-tests
+    ${SRC_DIR}/WebUI/WebUIRuntime.cpp
+    ${SRC_DIR}/WebUI/VistasWebUI.cpp
+    ${SRC_DIR}/WebUI/EstadoInterfaces.cpp
+    ${SRC_DIR}/Objetos/Componentes/InterfaceComponent.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests/WebUIRuntimeTests.cpp
+)
+target_link_libraries(webui-runtime-tests PRIVATE
+    funshi_diagnostics_core funshi_glm)
+target_include_directories(webui-runtime-tests PRIVATE
+    ${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/External
+)
+set_target_properties(webui-runtime-tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+add_test(NAME webui-runtime-tests COMMAND webui-runtime-tests)
+
 # Prueba end-to-end del backend Java (se compila solo con FUNSHI_JAVA=ON).
 if(FUNSHI_JAVA)
     find_package(JNI REQUIRED)
@@ -1283,6 +1619,23 @@ if(WIN32)
     target_link_libraries(scripts-tests PRIVATE dbghelp)
     target_link_libraries(scripts-runtime-tests PRIVATE dbghelp)
     target_link_libraries(audio-tests PRIVATE dbghelp)
+    target_link_libraries(musica-tests PRIVATE dbghelp)
+    target_link_libraries(hilos-tests PRIVATE dbghelp)
+    target_link_libraries(inspeccion-escena-tests PRIVATE dbghelp)
+    target_link_libraries(mods-tests PRIVATE dbghelp)
+    target_link_libraries(particulas-tests PRIVATE dbghelp)
+    target_link_libraries(interfaz-ui-tests PRIVATE dbghelp)
+    target_link_libraries(exportacion-tests PRIVATE dbghelp)
+    target_link_libraries(importar-archivos-tests PRIVATE dbghelp)
+    target_link_libraries(editor-input-tests PRIVATE dbghelp)
+    target_link_libraries(iconos-componentes-tests PRIVATE dbghelp)
+    target_link_libraries(iluminacion-tests PRIVATE dbghelp)
+    target_link_libraries(primitivas3d-tests PRIVATE dbghelp)
+    target_link_libraries(malla-regiones-tests PRIVATE dbghelp)
+    target_link_libraries(materiales-regiones-tests PRIVATE dbghelp)
+    target_link_libraries(serializacion-tests PRIVATE dbghelp)
+    target_link_libraries(ui-component-tests PRIVATE dbghelp)
+    target_link_libraries(webui-runtime-tests PRIVATE dbghelp)
     # Evitar conflicto std::byte (C++17) vs typedef byte en headers Windows (rpcndr.h, etc.)
     target_compile_definitions(filemanager-tests PRIVATE _HAS_STD_BYTE=0)
     target_compile_definitions(assetmanager-tests PRIVATE _HAS_STD_BYTE=0)
@@ -1295,6 +1648,23 @@ if(WIN32)
     target_compile_definitions(scripts-tests PRIVATE _HAS_STD_BYTE=0)
     target_compile_definitions(scripts-runtime-tests PRIVATE _HAS_STD_BYTE=0)
     target_compile_definitions(audio-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(musica-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(hilos-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(inspeccion-escena-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(mods-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(particulas-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(interfaz-ui-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(exportacion-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(importar-archivos-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(editor-input-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(iconos-componentes-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(iluminacion-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(primitivas3d-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(malla-regiones-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(materiales-regiones-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(serializacion-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(ui-component-tests PRIVATE _HAS_STD_BYTE=0)
+    target_compile_definitions(webui-runtime-tests PRIVATE _HAS_STD_BYTE=0)
 endif()
 
 endif() # NOT BUILD_RUNTIME (sin pruebas headless en el build runtime)
